@@ -135,7 +135,8 @@ function ResumeContent({ data }: { data: ResumeData }) {
   );
 
   const showExperience = (data.experience ?? []).some(
-    (e) => [e.company, e.title, e.location, e.start, e.end].some((x) => clean(x)) || (e.bulletsHtml ?? "").trim().length > 0);
+    (e) => [e.company, e.title, e.location, e.start, e.end].some((x) => clean(x)) || (e.bulletsHtml ?? "").trim().length > 0
+  );
 
   const showProjects = (data.projects ?? []).some((p) => [p.name, p.stack].some((x) => clean(x)) || (p.bulletsHtml ?? "").trim().length > 0);
 
@@ -287,19 +288,15 @@ function ResumeContent({ data }: { data: ResumeData }) {
             const company = clean(e.company);
             const loc = clean(e.location);
             const date = [clean(e.start), clean(e.end)].filter(Boolean).join(" -- ");
-            const bullets = (e.bullets ?? []).map((b) => clean(b)).filter(Boolean);
-            if (![title, company, loc, date].some(Boolean) && bullets.length === 0) return null;
+            const bulletsHtml = (e.bulletsHtml ?? "").trim();
+            if (![title, company, loc, date].some(Boolean) && !bulletsHtml) return null;
 
             return (
               <div key={e.id} className="mt-3">
                 <Row left={<span className="font-semibold">{title}</span>} right={<span className="font-semibold">{date}</span>} />
                 <Row left={<span className="italic">{company}</span>} right={<span className="italic">{loc}</span>} />
-                {bullets.length ? (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[12.5px] leading-[1.45] text-slate-900">
-                    {bullets.map((b, i) => (
-                      <li key={i}>{b}</li>
-                    ))}
-                  </ul>
+                {bulletsHtml ? (
+                  <div className="mt-2 text-[12.5px] leading-[1.45] text-slate-900 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1" dangerouslySetInnerHTML={{ __html: bulletsHtml }} />
                 ) : null}
               </div>
             );
@@ -318,11 +315,11 @@ function ResumeContent({ data }: { data: ResumeData }) {
             const subtitle = clean(c.subtitle);
             const loc = clean(c.location);
             const date = [clean(c.start), clean(c.end)].filter(Boolean).join(" -- ");
-            const bullets = (c.bullets ?? []).map((b) => clean(b)).filter(Boolean);
+            const bulletsHtml = (c.bulletsHtml ?? "").trim();
             const text = clean(c.text);
 
             const hasCore = [title, subtitle, loc, date].some(Boolean);
-            const hasBody = c.mode === "bullets" ? bullets.length > 0 : !!text;
+            const hasBody = c.mode === "bullets" ? !!bulletsHtml : !!text;
 
             if (!hasCore && !hasBody) return null;
 
@@ -332,12 +329,8 @@ function ResumeContent({ data }: { data: ResumeData }) {
                 <Row left={<span className="italic">{subtitle}</span>} right={<span className="italic">{loc}</span>} />
 
                 {c.mode === "bullets" ? (
-                  bullets.length ? (
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-[12.5px] leading-[1.45] text-slate-900">
-                      {bullets.map((b, i) => (
-                        <li key={i}>{b}</li>
-                      ))}
-                    </ul>
+                  bulletsHtml ? (
+                    <div className="mt-2 text-[12.5px] leading-[1.45] text-slate-900 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1" dangerouslySetInnerHTML={{ __html: bulletsHtml }} />
                   ) : null
                 ) : text ? (
                   <div className="mt-2 text-[12.5px] leading-[1.45] text-slate-900">{text}</div>
@@ -357,8 +350,8 @@ function ResumeContent({ data }: { data: ResumeData }) {
           {(data.projects ?? []).map((p) => {
             const name = clean(p.name);
             const stack = clean(p.stack);
-            const bullets = (p.bullets ?? []).map((b) => clean(b)).filter(Boolean);
-            if (![name, stack].some(Boolean) && bullets.length === 0) return null;
+            const bulletsHtml = (p.bulletsHtml ?? "").trim();
+            if (![name, stack].some(Boolean) && !bulletsHtml) return null;
 
             return (
               <div key={p.id} className="mt-3">
@@ -368,12 +361,8 @@ function ResumeContent({ data }: { data: ResumeData }) {
                     <span className="text-slate-700"> | {stack}</span>
                   ) : null}
                 </div>
-                {bullets.length ? (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[12.5px] leading-[1.45] text-slate-900">
-                    {bullets.map((b, i) => (
-                      <li key={i}>{b}</li>
-                    ))}
-                  </ul>
+                {bulletsHtml ? (
+                  <div className="mt-2 text-[12.5px] leading-[1.45] text-slate-900 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1" dangerouslySetInnerHTML={{ __html: bulletsHtml }} />
                 ) : null}
               </div>
             );
