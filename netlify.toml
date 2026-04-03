@@ -1,0 +1,4 @@
+[build]
+  base    = "guide-grads"
+  command = "npm run build"
+  publish = "out"
