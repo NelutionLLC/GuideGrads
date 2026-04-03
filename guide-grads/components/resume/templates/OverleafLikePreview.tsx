@@ -135,10 +135,9 @@ function ResumeContent({ data }: { data: ResumeData }) {
   );
 
   const showExperience = (data.experience ?? []).some(
-    (e) => [e.company, e.title, e.location, e.start, e.end].some((x) => clean(x)) || hasAny(e.bullets)
-  );
+    (e) => [e.company, e.title, e.location, e.start, e.end].some((x) => clean(x)) || (e.bulletsHtml ?? "").trim().length > 0);
 
-  const showProjects = (data.projects ?? []).some((p) => [p.name, p.stack].some((x) => clean(x)) || hasAny(p.bullets));
+  const showProjects = (data.projects ?? []).some((p) => [p.name, p.stack].some((x) => clean(x)) || (p.bulletsHtml ?? "").trim().length > 0);
 
   const showSkills = (data.skillBlocks ?? []).some((b) => {
     if (!clean(b.title)) return false;
