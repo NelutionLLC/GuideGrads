@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import OverleafTabsPreview from "./templates/OverleafTabsPreview";
+import React, { useEffect, useRef, useState } from "react";
+import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
+import RichTextArea from "./RichTextArea";
 
 /** ---------------- Types ---------------- */
 type Experience = {
@@ -11,7 +12,7 @@ type Experience = {
   location?: string;
   start: string;
   end: string;
-  bullets: string[];
+  bulletsHtml: string;
 };
 
 type Education = {
@@ -29,7 +30,7 @@ type Project = {
   id: string;
   name: string;
   stack: string;
-  bullets: string[];
+  bulletsHtml: string;
 };
 
 type SkillBlockKind = "list" | "text";
@@ -53,7 +54,7 @@ type CustomEntry = {
   end?: string;
 
   mode: CustomEntryMode; // bullets OR text
-  bullets: string[];
+  bulletsHtml: string;
   text: string;
 };
 
@@ -108,6 +109,7 @@ export type ResumeCustomize = {
   headingCaps: HeadingCaps;
   headingSize: HeadingSize;
   headingIcons: HeadingIcons;
+  sectionOrder: string[];
 };
 
 const STORAGE_KEY = "guidegrads.resume.builder.v2";
@@ -147,7 +149,10 @@ const defaultCustomize: ResumeCustomize = {
   headingCaps: "capitalize",
   headingSize: "m",
   headingIcons: "none",
+  sectionOrder: ["basics", "skills", "experience", "education", "projects", "achievements", "custom"],
 };
+
+const DEFAULT_SECTION_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
 
 /** ---------------- Helpers ---------------- */
 function uid() {
@@ -198,22 +203,15 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function UpIcon() {
+function DragGrip() {
   return (
-    <Icon>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-        <path d="M12 5l-6 6h12l-6-6Z" fill="currentColor" />
+    <span className="cursor-grab px-1 text-white/30 hover:text-white/60 active:cursor-grabbing">
+      <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
+        <circle cx="3" cy="3" r="1.4" /><circle cx="9" cy="3" r="1.4" />
+        <circle cx="3" cy="8" r="1.4" /><circle cx="9" cy="8" r="1.4" />
+        <circle cx="3" cy="13" r="1.4" /><circle cx="9" cy="13" r="1.4" />
       </svg>
-    </Icon>
-  );
-}
-function DownIcon() {
-  return (
-    <Icon>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-        <path d="M12 19l6-6H6l6 6Z" fill="currentColor" />
-      </svg>
-    </Icon>
+    </span>
   );
 }
 
@@ -262,32 +260,6 @@ function TextInput({
   );
 }
 
-function TextArea({
-  label,
-  value,
-  placeholder,
-  onChange,
-  rows = 4,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onChange: (v: string) => void;
-  rows?: number;
-}) {
-  return (
-    <div>
-      <div className="text-xs text-white/70">{label}</div>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={rows}
-        className="mt-1 w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
-      />
-    </div>
-  );
-}
 
 function SmallButton({
   children,
@@ -358,19 +330,19 @@ function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative mx-4 w-full max-w-5xl rounded-3xl bg-white p-8 text-slate-900 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <div className="text-4xl font-extrabold">{title}</div>
+      <div className="relative mx-4 w-full max-w-5xl rounded-2xl bg-[#0b223a] p-6 shadow-2xl">
+        <div className="flex items-center justify-between gap-4">
+          <div className="text-base font-semibold text-white">{title}</div>
           <button
             onClick={onClose}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-slate-600 hover:bg-slate-50"
+            className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/80 hover:bg-white/15"
             aria-label="Close"
             type="button"
           >
             ✕
           </button>
         </div>
-        <div className="mt-6">{children}</div>
+        <div className="mt-5">{children}</div>
       </div>
     </div>
   );
@@ -388,11 +360,11 @@ function AddTile({
   return (
     <button
       onClick={onClick}
-      className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left hover:bg-slate-100"
+      className="rounded-2xl border border-white/10 bg-white/5 p-5 text-left hover:bg-white/10"
       type="button"
     >
-      <div className="text-lg font-semibold">{title}</div>
-      <div className="mt-1 text-sm text-slate-600">{desc}</div>
+      <div className="text-sm font-semibold text-white">{title}</div>
+      <div className="mt-1 text-xs text-white/60">{desc}</div>
     </button>
   );
 }
@@ -416,45 +388,6 @@ function MiniRow({
   );
 }
 
-function BulletEditor({
-  bullets,
-  onChange,
-}: {
-  bullets: string[];
-  onChange: (next: string[]) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-white/70">Bullets</div>
-        <SmallButton onClick={() => onChange([...(bullets ?? []), ""])}>+ Bullet</SmallButton>
-      </div>
-
-      {(bullets ?? []).map((b, idx) => (
-        <div key={idx} className="flex items-center gap-2">
-          <input
-            value={b}
-            onChange={(e) => {
-              const next = [...bullets];
-              next[idx] = e.target.value;
-              onChange(next);
-            }}
-            placeholder="Quantified impact bullet"
-            className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
-          />
-          <button
-            onClick={() => onChange(bullets.filter((_, i) => i !== idx))}
-            className="rounded-full bg-white/10 px-3 py-2 text-xs text-white/80 hover:bg-white/15"
-            aria-label="Remove bullet"
-            type="button"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 /** ---------------- Customize UI helpers ---------------- */
 function clamp(n: number, min: number, max: number) {
@@ -580,6 +513,8 @@ export default function ResumeBuilder() {
   const [resumeName] = useState("Damber");
   const [resumeMenuOpen, setResumeMenuOpen] = useState(false);
 
+  const previewRef = useRef<OverleafTabsPreviewHandle>(null);
+
   /** --- content UX state --- */
   const [addModalOpen, setAddModalOpen] = useState(false);
 
@@ -611,6 +546,24 @@ export default function ResumeBuilder() {
 
   // custom: entry expanded
   const [openCustomId, setOpenCustomId] = useState<string | null>(null);
+
+  // section drag-to-reorder
+  const [dragSection, setDragSection] = useState<string | null>(null);
+  const [dragOverSection, setDragOverSection] = useState<string | null>(null);
+
+  // sub-item drag-to-reorder
+  const [dragExpId, setDragExpId] = useState<string | null>(null);
+  const [dragOverExpId, setDragOverExpId] = useState<string | null>(null);
+  const [dragEduId, setDragEduId] = useState<string | null>(null);
+  const [dragOverEduId, setDragOverEduId] = useState<string | null>(null);
+  const [dragProjId, setDragProjId] = useState<string | null>(null);
+  const [dragOverProjId, setDragOverProjId] = useState<string | null>(null);
+  const [dragSkillId, setDragSkillId] = useState<string | null>(null);
+  const [dragOverSkillId, setDragOverSkillId] = useState<string | null>(null);
+  const [dragAchIdx, setDragAchIdx] = useState<number | null>(null);
+  const [dragOverAchIdx, setDragOverAchIdx] = useState<number | null>(null);
+  const [dragCustomId, setDragCustomId] = useState<string | null>(null);
+  const [dragOverCustomId, setDragOverCustomId] = useState<string | null>(null);
 
   // visibility (sections hidden until added)
   const [visible, setVisible] = useState({
@@ -674,6 +627,48 @@ export default function ResumeBuilder() {
     if (section === "custom") setOpenCustomId(null);
   }
 
+  /** ---------------- Sub-item reorder helpers ---------------- */
+  function reorderById<T extends { id: string }>(
+    list: T[],
+    fromId: string,
+    toId: string
+  ): T[] {
+    const fi = list.findIndex((x) => x.id === fromId);
+    const ti = list.findIndex((x) => x.id === toId);
+    if (fi < 0 || ti < 0 || fi === ti) return list;
+    return moveByIndex(list, fi, ti);
+  }
+
+  function reorderExperiences(fromId: string, toId: string) {
+    setData((p) => ({ ...p, experience: reorderById(p.experience, fromId, toId) }));
+  }
+  function reorderEducations(fromId: string, toId: string) {
+    setData((p) => ({ ...p, education: reorderById(p.education, fromId, toId) }));
+  }
+  function reorderProjects(fromId: string, toId: string) {
+    setData((p) => ({ ...p, projects: reorderById(p.projects, fromId, toId) }));
+  }
+  function reorderSkillBlocks(fromId: string, toId: string) {
+    setData((p) => ({ ...p, skillBlocks: reorderById(p.skillBlocks ?? [], fromId, toId) }));
+  }
+  function reorderAchievements(fromIdx: number, toIdx: number) {
+    setData((p) => ({ ...p, achievements: moveByIndex(p.achievements, fromIdx, toIdx) }));
+  }
+  function reorderCustomEntries(fromId: string, toId: string) {
+    setData((p) => ({ ...p, custom: reorderById(p.custom ?? [], fromId, toId) }));
+  }
+
+  /** ---------------- Section reorder ---------------- */
+  function reorderSections(from: string, to: string) {
+    setCustomize((prev) => {
+      const order = [...(prev.sectionOrder ?? DEFAULT_SECTION_ORDER)];
+      const fromIdx = order.indexOf(from);
+      const toIdx = order.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev;
+      return { ...prev, sectionOrder: moveByIndex(order, fromIdx, toIdx) };
+    });
+  }
+
   /** ---------------- Skills ---------------- */
   function addSkillBlock(title: string) {
     const t = title.trim();
@@ -708,16 +703,6 @@ export default function ResumeBuilder() {
   function removeSkillBlock(id: string) {
     setData((p) => ({ ...p, skillBlocks: (p.skillBlocks ?? []).filter((b) => b.id !== id) }));
     setOpenSkillId((cur) => (cur === id ? null : cur));
-  }
-
-  function moveSkillBlock(id: string, dir: -1 | 1) {
-    setData((p) => {
-      const idx = (p.skillBlocks ?? []).findIndex((x) => x.id === id);
-      if (idx < 0) return p;
-      const nextIdx = idx + dir;
-      if (nextIdx < 0 || nextIdx >= (p.skillBlocks ?? []).length) return p;
-      return { ...p, skillBlocks: moveByIndex(p.skillBlocks ?? [], idx, nextIdx) };
-    });
   }
 
   /** ---------------- Custom section ---------------- */
@@ -758,7 +743,7 @@ export default function ResumeBuilder() {
           start: "",
           end: "",
           mode: "bullets",
-          bullets: [],
+          bulletsHtml: "",
           text: "",
         },
       ],
@@ -776,17 +761,6 @@ export default function ResumeBuilder() {
   function removeCustomEntry(id: string) {
     setData((p) => ({ ...p, custom: (p.custom ?? []).filter((c) => c.id !== id) }));
     setOpenCustomId((cur) => (cur === id ? null : cur));
-  }
-
-  function moveCustomEntry(id: string, dir: -1 | 1) {
-    setData((p) => {
-      const list = p.custom ?? [];
-      const idx = list.findIndex((x) => x.id === id);
-      if (idx < 0) return p;
-      const nextIdx = idx + dir;
-      if (nextIdx < 0 || nextIdx >= list.length) return p;
-      return { ...p, custom: moveByIndex(list, idx, nextIdx) };
-    });
   }
 
   /** ---------------- CRUD (Education/Experience/Projects/Achievements) ---------------- */
@@ -807,23 +781,13 @@ export default function ResumeBuilder() {
     setData((p) => ({ ...p, education: p.education.filter((e) => e.id !== id) }));
     if (openEduId === id) setOpenEduId(null);
   }
-  function moveEducation(id: string, dir: -1 | 1) {
-    setData((p) => {
-      const idx = p.education.findIndex((x) => x.id === id);
-      if (idx < 0) return p;
-      const nextIdx = idx + dir;
-      if (nextIdx < 0 || nextIdx >= p.education.length) return p;
-      return { ...p, education: moveByIndex(p.education, idx, nextIdx) };
-    });
-  }
-
   function addExperience() {
     setVisible((p) => ({ ...p, experience: true }));
     setOpenExperience(true);
     const id = uid();
     setData((p) => ({
       ...p,
-      experience: [...p.experience, { id, company: "", title: "", location: "", start: "", end: "", bullets: [] }],
+      experience: [...p.experience, { id, company: "", title: "", location: "", start: "", end: "", bulletsHtml: "" }],
     }));
     setOpenExpId(id);
   }
@@ -834,21 +798,11 @@ export default function ResumeBuilder() {
     setData((p) => ({ ...p, experience: p.experience.filter((e) => e.id !== id) }));
     if (openExpId === id) setOpenExpId(null);
   }
-  function moveExperience(id: string, dir: -1 | 1) {
-    setData((p) => {
-      const idx = p.experience.findIndex((x) => x.id === id);
-      if (idx < 0) return p;
-      const nextIdx = idx + dir;
-      if (nextIdx < 0 || nextIdx >= p.experience.length) return p;
-      return { ...p, experience: moveByIndex(p.experience, idx, nextIdx) };
-    });
-  }
-
   function addProject() {
     setVisible((p) => ({ ...p, projects: true }));
     setOpenProjects(true);
     const id = uid();
-    setData((p) => ({ ...p, projects: [...p.projects, { id, name: "", stack: "", bullets: [] }] }));
+    setData((p) => ({ ...p, projects: [...p.projects, { id, name: "", stack: "", bulletsHtml: "" }] }));
     setOpenProjId(id);
   }
   function updateProject(id: string, patch: Partial<Project>) {
@@ -858,24 +812,11 @@ export default function ResumeBuilder() {
     setData((p) => ({ ...p, projects: p.projects.filter((x) => x.id !== id) }));
     if (openProjId === id) setOpenProjId(null);
   }
-  function moveProject(id: string, dir: -1 | 1) {
-    setData((p) => {
-      const idx = p.projects.findIndex((x) => x.id === id);
-      if (idx < 0) return p;
-      const nextIdx = idx + dir;
-      if (nextIdx < 0 || nextIdx >= p.projects.length) return p;
-      return { ...p, projects: moveByIndex(p.projects, idx, nextIdx) };
-    });
-  }
-
   function addAchievement() {
     setVisible((p) => ({ ...p, achievements: true }));
     setOpenAchievements(true);
-    setData((p) => {
-      const newAchievements = [...p.achievements, ""];
-      setOpenAchIndex(newAchievements.length - 1);
-      return { ...p, achievements: newAchievements };
-    });
+    setData((p) => ({ ...p, achievements: [...p.achievements, ""] }));
+    setOpenAchIndex((data.achievements ?? []).length);
   }
   function updateAchievement(index: number, value: string) {
     setData((p) => {
@@ -888,20 +829,6 @@ export default function ResumeBuilder() {
     setData((p) => ({ ...p, achievements: p.achievements.filter((_, i) => i !== index) }));
     if (openAchIndex === index) setOpenAchIndex(null);
   }
-  function moveAchievement(index: number, dir: -1 | 1) {
-    setData((p) => {
-      const nextIdx = index + dir;
-      if (nextIdx < 0 || nextIdx >= p.achievements.length) return p;
-      return { ...p, achievements: moveByIndex(p.achievements, index, nextIdx) };
-    });
-    setOpenAchIndex((cur) => {
-      if (cur === null) return cur;
-      if (cur === index) return index + dir;
-      if (cur === index + dir) return index;
-      return cur;
-    });
-  }
-
   /** ---------------- Add Content modal actions ---------------- */
   function handleAddSection(section: keyof typeof visible) {
     setAddModalOpen(false);
@@ -929,9 +856,9 @@ export default function ResumeBuilder() {
     }
   }
 
-  /** ---------------- Download stub ---------------- */
+  /** ---------------- Download ---------------- */
   function onDownload() {
-    window.print();
+    previewRef.current?.download();
   }
 
   const customLabel = data.customSectionTitle?.trim() ? data.customSectionTitle.trim() : "Custom";
@@ -946,6 +873,417 @@ export default function ResumeBuilder() {
 
   function setCustomizePatch(patch: Partial<ResumeCustomize>) {
     setCustomize((prev) => ({ ...prev, ...patch }));
+  }
+
+  /** ---------------- Section content renderer ---------------- */
+  function renderSectionContent(key: string): React.ReactNode {
+    if (key === "basics") return (
+      <>
+        <button onClick={() => setOpenBasics((v) => !v)} className="flex w-full items-center justify-between gap-3" type="button">
+          <div className="text-left">
+            <div className="text-sm font-semibold">Basics</div>
+            <div className="mt-1 text-xs text-white/60">
+              {loaded ? `${data.name || "Full name"} • ${data.email || "email"} • ${data.phone || "phone"}` : "Full name • email • phone"}
+            </div>
+          </div>
+          <Chevron open={openBasics} />
+        </button>
+        {openBasics ? (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <TextInput label="Full name" value={data.name} onChange={(v) => setBasics("name", v)} />
+            <TextInput label="Location" value={data.location} onChange={(v) => setBasics("location", v)} />
+            <TextInput label="Email" value={data.email} onChange={(v) => setBasics("email", v)} />
+            <TextInput label="Phone" value={data.phone} onChange={(v) => setBasics("phone", v)} />
+            <TextInput label="LinkedIn URL" value={data.linkedin} onChange={(v) => setBasics("linkedin", v)} />
+            <TextInput label="GitHub" value={data.github ?? ""} onChange={(v) => setBasics("github", v)} />
+            <TextInput label="Website URL" value={data.website} onChange={(v) => setBasics("website", v)} />
+            <div className="sm:col-span-2">
+              <RichTextArea label="Summary" value={data.summary} onChange={(v) => setBasics("summary", v)} placeholder="Write a brief professional summary..." />
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "skills") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenSkills((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">Skills</div>
+              <div className="mt-1 text-xs text-white/60">
+                {(data.skillBlocks ?? []).length ? "Configured" : "No skill blocks"}
+              </div>
+            </div>
+            <Chevron open={openSkills} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={() => { setNewSkillTitle(""); setIsAddSkillOpen(true); }}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("skills")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openSkills ? (
+          <div className="mt-4 space-y-3">
+            {(data.skillBlocks ?? []).length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-xs text-white/40">No skills added yet. Click "+ Add".</div>
+            ) : null}
+            {(data.skillBlocks ?? []).map((b) => {
+              const isOpen = openSkillId === b.id;
+              const isDragging = dragSkillId === b.id;
+              const isDragOver = dragOverSkillId === b.id && dragSkillId !== b.id;
+              return (
+                <div
+                  key={b.id}
+                  draggable
+                  onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDragSkillId(b.id); }}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverSkillId(b.id); }}
+                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (dragSkillId && dragSkillId !== b.id) reorderSkillBlocks(dragSkillId, b.id); setDragSkillId(null); setDragOverSkillId(null); }}
+                  onDragEnd={() => { setDragSkillId(null); setDragOverSkillId(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={b.title || "Untitled skill"} onClick={() => setOpenSkillId((cur) => (cur === b.id ? null : b.id))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeSkillBlock(b.id)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-xs text-white/70">
+                          <span>Type:</span>
+                          <SmallButton onClick={() => updateSkillBlock(b.id, { kind: "list" })} variant={b.kind === "list" ? "solid" : "ghost"}>List</SmallButton>
+                          <SmallButton onClick={() => updateSkillBlock(b.id, { kind: "text" })} variant={b.kind === "text" ? "solid" : "ghost"}>Text</SmallButton>
+                        </div>
+                        {b.kind === "list" ? (
+                          <div className="space-y-2">
+                            <div className="text-xs text-white/70">Items</div>
+                            <input value={(b.items ?? []).join(", ")} onChange={(e) => updateSkillBlock(b.id, { items: splitCommaList(e.target.value) })} placeholder="Comma separated" className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" />
+                          </div>
+                        ) : (
+                          <RichTextArea label="Text" value={b.text ?? ""} onChange={(v) => updateSkillBlock(b.id, { text: v })} placeholder="Write a single line or paragraph" />
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "experience") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenExperience((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">Work Experience</div>
+              <div className="mt-1 text-xs text-white/60">
+                {data.experience.length ? `${data.experience.length} entr${data.experience.length === 1 ? "y" : "ies"}` : "No entries"}
+              </div>
+            </div>
+            <Chevron open={openExperience} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={addExperience}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("experience")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openExperience ? (
+          <div className="mt-4 space-y-3">
+            {data.experience.map((e) => {
+              const label = e.title?.trim() || "Untitled position";
+              const isOpen = openExpId === e.id;
+              const isDragging = dragExpId === e.id;
+              const isDragOver = dragOverExpId === e.id && dragExpId !== e.id;
+              return (
+                <div
+                  key={e.id}
+                  draggable
+                  onDragStart={(ev) => { ev.stopPropagation(); ev.dataTransfer.effectAllowed = "move"; setDragExpId(e.id); }}
+                  onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setDragOverExpId(e.id); }}
+                  onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (dragExpId && dragExpId !== e.id) reorderExperiences(dragExpId, e.id); setDragExpId(null); setDragOverExpId(null); }}
+                  onDragEnd={() => { setDragExpId(null); setDragOverExpId(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={label} onClick={() => setOpenExpId((cur) => (cur === e.id ? null : e.id))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeExperience(e.id)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <TextInput label="Job Title" value={e.title} onChange={(v) => updateExperience(e.id, { title: v })} />
+                        <TextInput label="Company" value={e.company} onChange={(v) => updateExperience(e.id, { company: v })} />
+                        <TextInput label="Location" value={e.location ?? ""} onChange={(v) => updateExperience(e.id, { location: v })} />
+                        <TextInput label="Start" value={e.start} onChange={(v) => updateExperience(e.id, { start: v })} />
+                        <TextInput label="End" value={e.end} onChange={(v) => updateExperience(e.id, { end: v })} />
+                        <div className="sm:col-span-2">
+                          <RichTextArea label="Bullets" value={e.bulletsHtml ?? ""} onChange={(v) => updateExperience(e.id, { bulletsHtml: v })} placeholder="Add bullet points..." />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "education") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenEducation((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">Education</div>
+              <div className="mt-1 text-xs text-white/60">
+                {data.education.length ? `${data.education.length} entr${data.education.length === 1 ? "y" : "ies"}` : "No entries"}
+              </div>
+            </div>
+            <Chevron open={openEducation} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={addEducation}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("education")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openEducation ? (
+          <div className="mt-4 space-y-3">
+            {data.education.map((e) => {
+              const label = e.school?.trim() || "Untitled education";
+              const isOpen = openEduId === e.id;
+              const isDragging = dragEduId === e.id;
+              const isDragOver = dragOverEduId === e.id && dragEduId !== e.id;
+              return (
+                <div
+                  key={e.id}
+                  draggable
+                  onDragStart={(ev) => { ev.stopPropagation(); ev.dataTransfer.effectAllowed = "move"; setDragEduId(e.id); }}
+                  onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setDragOverEduId(e.id); }}
+                  onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (dragEduId && dragEduId !== e.id) reorderEducations(dragEduId, e.id); setDragEduId(null); setDragOverEduId(null); }}
+                  onDragEnd={() => { setDragEduId(null); setDragOverEduId(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={label} onClick={() => setOpenEduId((cur) => (cur === e.id ? null : e.id))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeEducation(e.id)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <TextInput label="School" value={e.school} onChange={(v) => updateEducation(e.id, { school: v })} />
+                        <TextInput label="Degree" value={e.degree} onChange={(v) => updateEducation(e.id, { degree: v })} />
+                        <TextInput label="Field" value={e.field} onChange={(v) => updateEducation(e.id, { field: v })} />
+                        <TextInput label="City" value={e.city} onChange={(v) => updateEducation(e.id, { city: v })} />
+                        <TextInput label="Start" value={e.start} onChange={(v) => updateEducation(e.id, { start: v })} />
+                        <TextInput label="End" value={e.end} onChange={(v) => updateEducation(e.id, { end: v })} />
+                        <div className="sm:col-span-2">
+                          <RichTextArea label="Coursework (optional)" value={e.coursework ?? ""} onChange={(v) => updateEducation(e.id, { coursework: v })} />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "projects") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenProjects((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">Projects</div>
+              <div className="mt-1 text-xs text-white/60">
+                {data.projects.length ? `${data.projects.length} entr${data.projects.length === 1 ? "y" : "ies"}` : "No entries"}
+              </div>
+            </div>
+            <Chevron open={openProjects} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={addProject}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("projects")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openProjects ? (
+          <div className="mt-4 space-y-3">
+            {data.projects.map((p) => {
+              const label = p.name?.trim() || "Untitled project";
+              const isOpen = openProjId === p.id;
+              const isDragging = dragProjId === p.id;
+              const isDragOver = dragOverProjId === p.id && dragProjId !== p.id;
+              return (
+                <div
+                  key={p.id}
+                  draggable
+                  onDragStart={(ev) => { ev.stopPropagation(); ev.dataTransfer.effectAllowed = "move"; setDragProjId(p.id); }}
+                  onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setDragOverProjId(p.id); }}
+                  onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (dragProjId && dragProjId !== p.id) reorderProjects(dragProjId, p.id); setDragProjId(null); setDragOverProjId(null); }}
+                  onDragEnd={() => { setDragProjId(null); setDragOverProjId(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={label} onClick={() => setOpenProjId((cur) => (cur === p.id ? null : p.id))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeProject(p.id)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <TextInput label="Project name" value={p.name} onChange={(v) => updateProject(p.id, { name: v })} />
+                        <TextInput label="Tech stack" value={p.stack} onChange={(v) => updateProject(p.id, { stack: v })} />
+                        <div className="sm:col-span-2">
+                          <RichTextArea label="Bullets" value={p.bulletsHtml ?? ""} onChange={(v) => updateProject(p.id, { bulletsHtml: v })} placeholder="Add bullet points..." />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "achievements") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenAchievements((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">Achievements</div>
+              <div className="mt-1 text-xs text-white/60">{hasAny(data.achievements) ? "Configured" : "No items"}</div>
+            </div>
+            <Chevron open={openAchievements} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={addAchievement}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("achievements")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openAchievements ? (
+          <div className="mt-4 space-y-3">
+            {(data.achievements ?? []).map((a, idx) => {
+              const plainText = (a ?? "").replace(/<[^>]*>/g, "").trim();
+              const label = plainText || "Untitled achievement";
+              const isOpen = openAchIndex === idx;
+              const isDragging = dragAchIdx === idx;
+              const isDragOver = dragOverAchIdx === idx && dragAchIdx !== idx;
+              return (
+                <div
+                  key={idx}
+                  draggable
+                  onDragStart={(ev) => { ev.stopPropagation(); ev.dataTransfer.effectAllowed = "move"; setDragAchIdx(idx); }}
+                  onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setDragOverAchIdx(idx); }}
+                  onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (dragAchIdx !== null && dragAchIdx !== idx) reorderAchievements(dragAchIdx, idx); setDragAchIdx(null); setDragOverAchIdx(null); }}
+                  onDragEnd={() => { setDragAchIdx(null); setDragOverAchIdx(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={label} onClick={() => setOpenAchIndex((cur) => (cur === idx ? null : idx))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeAchievement(idx)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <RichTextArea value={a} onChange={(v) => updateAchievement(idx, v)} placeholder="Achievement bullet" />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    if (key === "custom") return (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => setOpenCustom((v) => !v)} className="flex min-w-0 flex-1 items-center justify-between gap-3" type="button">
+            <div className="text-left">
+              <div className="text-sm font-semibold">{customLabel}</div>
+              <div className="mt-1 text-xs text-white/60">
+                {(data.custom?.length ?? 0) ? `${data.custom.length} entr${data.custom.length === 1 ? "y" : "ies"}` : "No entries"}
+              </div>
+            </div>
+            <Chevron open={openCustom} />
+          </button>
+          <div className="flex items-center gap-2">
+            <SmallButton variant="solid" onClick={addCustomEntry}>+ Add</SmallButton>
+            <SmallButton variant="danger" onClick={() => deleteSection("custom")}>Delete</SmallButton>
+            <DragGrip />
+          </div>
+        </div>
+        {openCustom ? (
+          <div className="mt-4 space-y-3">
+            {(data.custom?.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-xs text-white/40">No entries yet. Click "+ Add".</div>
+            ) : null}
+            {(data.custom ?? []).map((c) => {
+              const label = c.title?.trim() || "Untitled entry";
+              const isOpen = openCustomId === c.id;
+              const isDragging = dragCustomId === c.id;
+              const isDragOver = dragOverCustomId === c.id && dragCustomId !== c.id;
+              return (
+                <div
+                  key={c.id}
+                  draggable
+                  onDragStart={(ev) => { ev.stopPropagation(); ev.dataTransfer.effectAllowed = "move"; setDragCustomId(c.id); }}
+                  onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setDragOverCustomId(c.id); }}
+                  onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (dragCustomId && dragCustomId !== c.id) reorderCustomEntries(dragCustomId, c.id); setDragCustomId(null); setDragOverCustomId(null); }}
+                  onDragEnd={() => { setDragCustomId(null); setDragOverCustomId(null); }}
+                  className={["space-y-2 rounded-xl transition-all", isDragging ? "opacity-40" : "", isDragOver ? "ring-2 ring-teal-400/50" : ""].filter(Boolean).join(" ")}
+                >
+                  <MiniRow label={label} onClick={() => setOpenCustomId((cur) => (cur === c.id ? null : c.id))} right={
+                    <div className="flex items-center gap-2">
+                      <SmallButton variant="danger" onClick={() => removeCustomEntry(c.id)}>Remove</SmallButton>
+                      <DragGrip />
+                    </div>
+                  } />
+                  {isOpen ? (
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <TextInput label="Title" value={c.title} onChange={(v) => updateCustomEntry(c.id, { title: v })} />
+                        <TextInput label="Subtitle" value={c.subtitle} onChange={(v) => updateCustomEntry(c.id, { subtitle: v })} />
+                        <TextInput label="Location (optional)" value={c.location ?? ""} onChange={(v) => updateCustomEntry(c.id, { location: v })} />
+                        <TextInput label="Start (optional)" value={c.start ?? ""} onChange={(v) => updateCustomEntry(c.id, { start: v })} />
+                        <TextInput label="End (optional)" value={c.end ?? ""} onChange={(v) => updateCustomEntry(c.id, { end: v })} />
+                        <div className="sm:col-span-2 mt-2 flex items-center gap-2 text-xs text-white/70">
+                          <span>Mode:</span>
+                          <SmallButton onClick={() => updateCustomEntry(c.id, { mode: "bullets" })} variant={c.mode === "bullets" ? "solid" : "ghost"}>Bullets</SmallButton>
+                          <SmallButton onClick={() => updateCustomEntry(c.id, { mode: "text" })} variant={c.mode === "text" ? "solid" : "ghost"}>Text</SmallButton>
+                        </div>
+                        <div className="sm:col-span-2">
+                          {c.mode === "bullets" ? (
+                            <RichTextArea label="Bullets" value={c.bulletsHtml ?? ""} onChange={(v) => updateCustomEntry(c.id, { bulletsHtml: v })} placeholder="Add bullet points..." />
+                          ) : (
+                            <RichTextArea label="Text" value={c.text ?? ""} onChange={(v) => updateCustomEntry(c.id, { text: v })} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </>
+    );
+    return null;
   }
 
   return (
@@ -1011,568 +1349,31 @@ export default function ResumeBuilder() {
             {activeTab === "content" ? (
               <>
 
-                {/* BASICS */}
-                {visible.basics ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <button
-                      onClick={() => setOpenBasics((v) => !v)}
-                      className="flex w-full items-center justify-between gap-3"
-                      type="button"
-                    >
-                      <div className="text-left">
-                        <div className="text-sm font-semibold">Basics</div>
-                        <div className="mt-1 text-xs text-white/60">
-                          {loaded
-                            ? `${data.name || "Full name"} • ${data.email || "email"} • ${data.phone || "phone"}`
-                            : "Full name • email • phone"}
-                        </div>
-                      </div>
-                      <Chevron open={openBasics} />
-                    </button>
-
-                    {openBasics ? (
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <TextInput label="Full name" value={data.name} onChange={(v) => setBasics("name", v)} />
-                        <TextInput label="Location" value={data.location} onChange={(v) => setBasics("location", v)} />
-                        <TextInput label="Email" value={data.email} onChange={(v) => setBasics("email", v)} />
-                        <TextInput label="Phone" value={data.phone} onChange={(v) => setBasics("phone", v)} />
-                        <TextInput label="LinkedIn URL" value={data.linkedin} onChange={(v) => setBasics("linkedin", v)} />
-                        <TextInput label="GitHub" value={data.github ?? ""} onChange={(v) => setBasics("github", v)} />
-                        <TextInput label="Website URL" value={data.website} onChange={(v) => setBasics("website", v)} />
-                        <div className="sm:col-span-2">
-                          <TextArea label="Summary" value={data.summary} onChange={(v) => setBasics("summary", v)} rows={4} />
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* SKILLS */}
-                {visible.skills ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenSkills((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
+                {/* SECTIONS — drag to reorder */}
+                {(customize.sectionOrder ?? DEFAULT_SECTION_ORDER)
+                  .filter((key) => visible[key as keyof typeof visible])
+                  .map((key) => {
+                    const isDraggable = key !== "basics";
+                    const isBeingDragged = dragSection === key;
+                    const isDragTarget = dragOverSection === key && dragSection !== key;
+                    return (
+                      <div
+                        key={key}
+                        draggable={isDraggable}
+                        onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragSection(key); } : undefined}
+                        onDragOver={isDraggable ? (e) => { e.preventDefault(); setDragOverSection(key); } : undefined}
+                        onDrop={isDraggable ? (e) => { e.preventDefault(); if (dragSection && dragSection !== key) reorderSections(dragSection, key); setDragSection(null); setDragOverSection(null); } : undefined}
+                        onDragEnd={isDraggable ? () => { setDragSection(null); setDragOverSection(null); } : undefined}
+                        className={[
+                          "rounded-2xl bg-white/5 p-4 transition-all duration-150",
+                          isBeingDragged ? "opacity-40" : "",
+                          isDragTarget ? "ring-2 ring-teal-400/50" : "",
+                        ].filter(Boolean).join(" ")}
                       >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">Skills</div>
-                          <div className="mt-1 text-xs text-white/60">
-                            {(data.skillBlocks ?? []).length ? "Configured" : "No skill blocks"}
-                          </div>
-                        </div>
-                        <Chevron open={openSkills} />
-                      </button>
-
-                      <div className="flex items-center gap-2">
-                        <SmallButton
-                          variant="solid"
-                          onClick={() => {
-                            setNewSkillTitle("");
-                            setIsAddSkillOpen(true);
-                          }}
-                        >
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("skills")}>
-                          Delete
-                        </SmallButton>
+                        {renderSectionContent(key)}
                       </div>
-                    </div>
-
-                    {openSkills ? (
-                      <div className="mt-4 space-y-3">
-                        {(data.skillBlocks ?? []).length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-xs text-white/40">
-                            No skills added yet. Click “+ Add”.
-                          </div>
-                        ) : null}
-
-                        {(data.skillBlocks ?? []).map((b, idx) => {
-                          const isOpen = openSkillId === b.id;
-
-                          return (
-                            <div key={b.id} className="space-y-2">
-                              <MiniRow
-                                label={b.title || "Untitled skill"}
-                                onClick={() => setOpenSkillId((cur) => (cur === b.id ? null : b.id))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveSkillBlock(b.id, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveSkillBlock(b.id, 1)} disabled={idx === (data.skillBlocks ?? []).length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeSkillBlock(b.id)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="space-y-3">
-                                    <TextInput
-                                      label="Section title"
-                                      value={b.title}
-                                      onChange={(v) => updateSkillBlock(b.id, { title: v })}
-                                      placeholder="e.g. Languages"
-                                    />
-
-                                    <div className="flex items-center gap-2 text-xs text-white/70">
-                                      <span>Type:</span>
-                                      <SmallButton
-                                        onClick={() => updateSkillBlock(b.id, { kind: "list" })}
-                                        variant={b.kind === "list" ? "solid" : "ghost"}
-                                      >
-                                        List
-                                      </SmallButton>
-                                      <SmallButton
-                                        onClick={() => updateSkillBlock(b.id, { kind: "text" })}
-                                        variant={b.kind === "text" ? "solid" : "ghost"}
-                                      >
-                                        Text
-                                      </SmallButton>
-                                    </div>
-
-                                    {b.kind === "list" ? (
-                                      <div className="space-y-2">
-                                        <div className="text-xs text-white/70">Items</div>
-                                        <input
-                                          value={(b.items ?? []).join(", ")}
-                                          onChange={(e) => updateSkillBlock(b.id, { items: splitCommaList(e.target.value) })}
-                                          placeholder="Comma separated"
-                                          className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
-                                        />
-                                      </div>
-                                    ) : (
-                                      <TextArea
-                                        label="Text"
-                                        value={b.text ?? ""}
-                                        onChange={(v) => updateSkillBlock(b.id, { text: v })}
-                                        rows={3}
-                                        placeholder="Write a single line or paragraph"
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* EXPERIENCE */}
-                {visible.experience ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenExperience((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
-                      >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">Work Experience</div>
-                          <div className="mt-1 text-xs text-white/60">
-                            {data.experience.length ? `${data.experience.length} entr${data.experience.length === 1 ? "y" : "ies"}` : "No entries"}
-                          </div>
-                        </div>
-                        <Chevron open={openExperience} />
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <SmallButton variant="solid" onClick={addExperience}>
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("experience")}>
-                          Delete
-                        </SmallButton>
-                      </div>
-                    </div>
-
-                    {openExperience ? (
-                      <div className="mt-4 space-y-3">
-                        {data.experience.map((e, idx) => {
-                          const label = e.title?.trim() || "Untitled position";
-                          const isOpen = openExpId === e.id;
-
-                          return (
-                            <div key={e.id} className="space-y-2">
-                              <MiniRow
-                                label={label}
-                                onClick={() => setOpenExpId((cur) => (cur === e.id ? null : e.id))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveExperience(e.id, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveExperience(e.id, 1)} disabled={idx === data.experience.length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeExperience(e.id)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <TextInput label="Job Title" value={e.title} onChange={(v) => updateExperience(e.id, { title: v })} />
-                                    <TextInput label="Company" value={e.company} onChange={(v) => updateExperience(e.id, { company: v })} />
-                                    <TextInput label="Location" value={e.location ?? ""} onChange={(v) => updateExperience(e.id, { location: v })} />
-                                    <TextInput label="Start" value={e.start} onChange={(v) => updateExperience(e.id, { start: v })} />
-                                    <TextInput label="End" value={e.end} onChange={(v) => updateExperience(e.id, { end: v })} />
-                                    <div className="sm:col-span-2">
-                                      <BulletEditor bullets={e.bullets ?? []} onChange={(next) => updateExperience(e.id, { bullets: next })} />
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* EDUCATION */}
-                {visible.education ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenEducation((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
-                      >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">Education</div>
-                          <div className="mt-1 text-xs text-white/60">
-                            {data.education.length ? `${data.education.length} entr${data.education.length === 1 ? "y" : "ies"}` : "No entries"}
-                          </div>
-                        </div>
-                        <Chevron open={openEducation} />
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <SmallButton variant="solid" onClick={addEducation}>
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("education")}>
-                          Delete
-                        </SmallButton>
-                      </div>
-                    </div>
-
-                    {openEducation ? (
-                      <div className="mt-4 space-y-3">
-                        {data.education.map((e, idx) => {
-                          const label = e.school?.trim() || "Untitled education";
-                          const isOpen = openEduId === e.id;
-
-                          return (
-                            <div key={e.id} className="space-y-2">
-                              <MiniRow
-                                label={label}
-                                onClick={() => setOpenEduId((cur) => (cur === e.id ? null : e.id))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveEducation(e.id, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveEducation(e.id, 1)} disabled={idx === data.education.length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeEducation(e.id)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <TextInput label="School" value={e.school} onChange={(v) => updateEducation(e.id, { school: v })} />
-                                    <TextInput label="Degree" value={e.degree} onChange={(v) => updateEducation(e.id, { degree: v })} />
-                                    <TextInput label="Field" value={e.field} onChange={(v) => updateEducation(e.id, { field: v })} />
-                                    <TextInput label="City" value={e.city} onChange={(v) => updateEducation(e.id, { city: v })} />
-                                    <TextInput label="Start" value={e.start} onChange={(v) => updateEducation(e.id, { start: v })} />
-                                    <TextInput label="End" value={e.end} onChange={(v) => updateEducation(e.id, { end: v })} />
-                                    <div className="sm:col-span-2">
-                                      <TextArea
-                                        label="Coursework (optional)"
-                                        value={e.coursework ?? ""}
-                                        onChange={(v) => updateEducation(e.id, { coursework: v })}
-                                        rows={2}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* PROJECTS */}
-                {visible.projects ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenProjects((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
-                      >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">Projects</div>
-                          <div className="mt-1 text-xs text-white/60">
-                            {data.projects.length ? `${data.projects.length} entr${data.projects.length === 1 ? "y" : "ies"}` : "No entries"}
-                          </div>
-                        </div>
-                        <Chevron open={openProjects} />
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <SmallButton variant="solid" onClick={addProject}>
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("projects")}>
-                          Delete
-                        </SmallButton>
-                      </div>
-                    </div>
-
-                    {openProjects ? (
-                      <div className="mt-4 space-y-3">
-                        {data.projects.map((p, idx) => {
-                          const label = p.name?.trim() || "Untitled project";
-                          const isOpen = openProjId === p.id;
-
-                          return (
-                            <div key={p.id} className="space-y-2">
-                              <MiniRow
-                                label={label}
-                                onClick={() => setOpenProjId((cur) => (cur === p.id ? null : p.id))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveProject(p.id, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveProject(p.id, 1)} disabled={idx === data.projects.length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeProject(p.id)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <TextInput label="Project name" value={p.name} onChange={(v) => updateProject(p.id, { name: v })} />
-                                    <TextInput label="Tech stack" value={p.stack} onChange={(v) => updateProject(p.id, { stack: v })} />
-                                    <div className="sm:col-span-2">
-                                      <BulletEditor bullets={p.bullets ?? []} onChange={(next) => updateProject(p.id, { bullets: next })} />
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* ACHIEVEMENTS */}
-                {visible.achievements ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenAchievements((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
-                      >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">Achievements</div>
-                          <div className="mt-1 text-xs text-white/60">{hasAny(data.achievements) ? "Configured" : "No items"}</div>
-                        </div>
-                        <Chevron open={openAchievements} />
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <SmallButton variant="solid" onClick={addAchievement}>
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("achievements")}>
-                          Delete
-                        </SmallButton>
-                      </div>
-                    </div>
-
-                    {openAchievements ? (
-                      <div className="mt-4 space-y-3">
-                        {(data.achievements ?? []).map((a, idx) => {
-                          const label = a?.trim() ? a.trim() : "Untitled achievement";
-                          const isOpen = openAchIndex === idx;
-
-                          return (
-                            <div key={idx} className="space-y-2">
-                              <MiniRow
-                                label={label}
-                                onClick={() => setOpenAchIndex((cur) => (cur === idx ? null : idx))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveAchievement(idx, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveAchievement(idx, 1)} disabled={idx === data.achievements.length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeAchievement(idx)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <input
-                                    value={a}
-                                    onChange={(e) => updateAchievement(idx, e.target.value)}
-                                    placeholder="Achievement bullet"
-                                    className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
-                                  />
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* CUSTOM (renamed by user-chosen title) */}
-                {visible.custom ? (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setOpenCustom((v) => !v)}
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3"
-                        type="button"
-                      >
-                        <div className="text-left">
-                          <div className="text-sm font-semibold">{customLabel}</div>
-                          <div className="mt-1 text-xs text-white/60">
-                            {(data.custom?.length ?? 0)
-                              ? `${data.custom.length} entr${data.custom.length === 1 ? "y" : "ies"}`
-                              : "No entries"}
-                          </div>
-                        </div>
-                        <Chevron open={openCustom} />
-                      </button>
-
-                      <div className="flex items-center gap-2">
-                        <SmallButton variant="solid" onClick={addCustomEntry}>
-                          + Add
-                        </SmallButton>
-                        <SmallButton variant="danger" onClick={() => deleteSection("custom")}>
-                          Delete
-                        </SmallButton>
-                      </div>
-                    </div>
-
-                    {openCustom ? (
-                      <div className="mt-4 space-y-3">
-                        {(data.custom?.length ?? 0) === 0 ? (
-                          <div className="rounded-xl border border-dashed border-white/10 px-3 py-6 text-center text-xs text-white/40">
-                            No entries yet. Click “+ Add”.
-                          </div>
-                        ) : null}
-
-                        {(data.custom ?? []).map((c, idx) => {
-                          const label = c.title?.trim() || "Untitled entry";
-                          const isOpen = openCustomId === c.id;
-
-                          return (
-                            <div key={c.id} className="space-y-2">
-                              <MiniRow
-                                label={label}
-                                onClick={() => setOpenCustomId((cur) => (cur === c.id ? null : c.id))}
-                                right={
-                                  <div className="flex items-center gap-2">
-                                    <SmallButton onClick={() => moveCustomEntry(c.id, -1)} disabled={idx === 0}>
-                                      <UpIcon />
-                                    </SmallButton>
-                                    <SmallButton onClick={() => moveCustomEntry(c.id, 1)} disabled={idx === (data.custom ?? []).length - 1}>
-                                      <DownIcon />
-                                    </SmallButton>
-                                    <SmallButton variant="danger" onClick={() => removeCustomEntry(c.id)}>
-                                      Remove
-                                    </SmallButton>
-                                  </div>
-                                }
-                              />
-
-                              {isOpen ? (
-                                <div className="rounded-2xl bg-white/5 p-4">
-                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <TextInput label="Title" value={c.title} onChange={(v) => updateCustomEntry(c.id, { title: v })} />
-                                    <TextInput label="Subtitle" value={c.subtitle} onChange={(v) => updateCustomEntry(c.id, { subtitle: v })} />
-                                    <TextInput
-                                      label="Location (optional)"
-                                      value={c.location ?? ""}
-                                      onChange={(v) => updateCustomEntry(c.id, { location: v })}
-                                    />
-                                    <TextInput label="Start (optional)" value={c.start ?? ""} onChange={(v) => updateCustomEntry(c.id, { start: v })} />
-                                    <TextInput label="End (optional)" value={c.end ?? ""} onChange={(v) => updateCustomEntry(c.id, { end: v })} />
-
-                                    <div className="sm:col-span-2 mt-2 flex items-center gap-2 text-xs text-white/70">
-                                      <span>Mode:</span>
-                                      <SmallButton
-                                        onClick={() => updateCustomEntry(c.id, { mode: "bullets" })}
-                                        variant={c.mode === "bullets" ? "solid" : "ghost"}
-                                      >
-                                        Bullets
-                                      </SmallButton>
-                                      <SmallButton
-                                        onClick={() => updateCustomEntry(c.id, { mode: "text" })}
-                                        variant={c.mode === "text" ? "solid" : "ghost"}
-                                      >
-                                        Text
-                                      </SmallButton>
-                                    </div>
-
-                                    <div className="sm:col-span-2">
-                                      {c.mode === "bullets" ? (
-                                        <BulletEditor bullets={c.bullets ?? []} onChange={(next) => updateCustomEntry(c.id, { bullets: next })} />
-                                      ) : (
-                                        <TextArea label="Text" value={c.text ?? ""} onChange={(v) => updateCustomEntry(c.id, { text: v })} rows={3} />
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+                    );
+                  })}
 
                 <button
                   onClick={() => setAddModalOpen(true)}
@@ -1727,13 +1528,8 @@ export default function ResumeBuilder() {
           </aside>
 
           {/* RIGHT: PREVIEW */}
-          <section className="h-[calc(100vh-150px)] overflow-hidden rounded-3xl bg-white/5 p-3">
-            <div className="h-full overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="h-full overflow-auto bg-slate-100 p-6 flex items-start justify-center">
-              <OverleafTabsPreview data={data} customize={customize} />
-            </div>
-
-            </div>
+          <section className="h-[calc(100vh-150px)] overflow-auto rounded-2xl bg-[#e2e5e9] p-8 flex items-start justify-center">
+            <OverleafTabsPreview ref={previewRef} data={data} customize={customize} />
           </section>
         </div>
       </div>

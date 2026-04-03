@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ResumeCustomize, ResumeData } from "../ResumeBuilder";
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
@@ -9,6 +9,18 @@ const mmToPx = (mm: number) => (mm * 96) / 25.4;
 // US Letter @ 96dpi
 const LETTER_W = 8.5 * 96; // 816
 const LETTER_H = 11 * 96; // 1056
+
+function injectBulletStyles(html: string): string {
+  return html
+    .replace(/<ul>/g, '<ul style="list-style:none;padding-left:0;margin:0">')
+    .replace(/<ol>/g, '<ol style="list-style:none;padding-left:0;margin:0">')
+    .replace(/<li>/g, '<li style="padding-left:0.9em;text-indent:-0.9em;margin:0">')
+    .replace(/<li /g, '<li style="padding-left:0.9em;text-indent:-0.9em;margin:0" ')
+    // only inline <p> directly inside <li>, not all paragraphs
+    .replace(/(<li[^>]*>)<p>/g, '$1<p style="display:inline;margin:0">')
+    // hanging indent for plain <p> bullet paragraphs (user typed • directly)
+    .replace(/<p>•/g, '<p style="padding-left:0.9em;text-indent:-0.9em;margin:0">•');
+}
 
 function joinParts(parts: (string | undefined | null)[], sep = " • ") {
   return parts.map((x) => (x ?? "").trim()).filter(Boolean).join(sep);
@@ -86,10 +98,12 @@ function SectionHeading({
   return (
     <div style={{ paddingTop: "20px" }}>
       <div className="text-slate-900 font-extrabold tracking-wide">{txt}</div>
-      <div className="mt-2 h-[1px] w-full bg-slate-300" />
+      <div className="mt-2 h-px w-full bg-slate-300" />
     </div>
   );
 }
+
+const PREVIEW_DEFAULT_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
 
 /** Build blocks (we paginate by block) */
 function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: number): Block[] {
@@ -102,248 +116,173 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   if ((data.website ?? "").trim()) contactItems.push({ icon: <IconGlobe />, label: prettyLabel(data.website.trim()), href: ensureHttp(data.website.trim()) });
   if ((data.github ?? "").trim()) contactItems.push({ icon: <IconGitHub />, label: prettyLabel(data.github!.trim()), href: ensureHttp(data.github!.trim()) });
 
-  blocks.push({
-    key: "header",
-    node: (
-      <div className="text-center">
-        {/* Name — subtle size increase: 28px at 9pt, grows ~1px per pt step */}
-        <div style={{ fontSize: baseFontPx + 16, fontWeight: 700, letterSpacing: "0.04em", color: "#0f172a" }}>
-          {(data.name ?? "").trim() || "Your Name"}
-        </div>
-
-        {/* Location — scales with font size like body text */}
-        {(data.location ?? "").trim() ? (
-          <div style={{ marginTop: "2px", color: "#475569" }}>
-            {data.location.trim()}
-          </div>
-        ) : null}
-
-        {/* Contact row with icons — scales with font size like body text */}
-        {contactItems.length > 0 ? (
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: "4px", marginTop: "6px", color: "#334155" }}>
-            {contactItems.map((item, i) => (
-              <React.Fragment key={i}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                  {item.icon}
-                  {item.href ? (
-                    <a href={item.href} style={{ color: "#334155", textDecoration: "none" }}>{item.label}</a>
-                  ) : (
-                    <span>{item.label}</span>
-                  )}
-                </span>
-              </React.Fragment>
-            ))}
-          </div>
-        ) : null}
-
-        {data.summary?.trim() ? (
-          <div style={{ marginTop: "6px", fontSize: "12px", color: "#475569", overflowWrap: "anywhere", wordBreak: "break-word" }}>
-            {data.summary.trim()}
-          </div>
-        ) : null}
+  const headerNode = (
+    <div className="text-center">
+      <div style={{ fontSize: baseFontPx + 16, fontWeight: 700, letterSpacing: "0.04em", color: "#0f172a" }}>
+        {(data.name ?? "").trim() || "Your Name"}
       </div>
-    ),
-  });
-
-  if ((data.education ?? []).length) {
-    blocks.push({
-      key: "edu-title",
-      node: <SectionHeading title="Education" customize={customize} />,
-    });
-
-    data.education.forEach((e) => {
-      blocks.push({
-        key: `edu-${e.id}`,
-        node: (
-          <div>
-            <div className="flex items-start justify-between gap-3">
-              <div className="font-semibold text-slate-900">{e.school}</div>
-              <div className="text-slate-700">{formatRange(e.start, e.end)}</div>
-            </div>
-            <div className="flex items-start justify-between gap-3">
-              <div className="text-slate-800">
-                {[e.degree, e.field].filter(Boolean).join(" in ")}
-              </div>
-              {e.city?.trim() ? (
-                <div className="text-slate-700">{e.city}</div>
-              ) : null}
-            </div>
-            {e.coursework?.trim() ? (
-              <div
-                className="text-slate-700"
-                style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-              >
-                Coursework: {e.coursework.trim()}
-              </div>
-            ) : null}
-          </div>
-        ),
-      });
-    });
-  }
-
-  if ((data.experience ?? []).length) {
-    blocks.push({
-      key: "exp-title",
-      node: <SectionHeading title="Work Experience" customize={customize} />,
-    });
-
-    data.experience.forEach((x) => {
-      blocks.push({
-        key: `exp-${x.id}`,
-        node: (
-          <div className="mt-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="font-semibold text-slate-900">{x.title}</div>
-              <div className="text-slate-700">{formatRange(x.start, x.end)}</div>
-            </div>
-            <div className="flex items-start justify-between gap-3">
-              <div className="italic text-slate-800">{x.company}</div>
-              {x.location?.trim() ? (
-                <div className="italic text-slate-700">{x.location}</div>
-              ) : null}
-            </div>
-
-            {(x.bullets ?? []).filter((b) => b.trim()).length ? (
-              <ul className="mt-1 list-disc pl-5 text-slate-800">
-                {x.bullets.filter((b) => b.trim()).map((b, i) => (
-                  <li key={i} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ),
-      });
-    });
-  }
-
-  if ((data.projects ?? []).length) {
-    blocks.push({
-      key: "proj-title",
-      node: <SectionHeading title="Projects" customize={customize} />,
-    });
-
-    data.projects.forEach((p) => {
-      blocks.push({
-        key: `proj-${p.id}`,
-        node: (
-          <div className="mt-2">
-            <div>
-              <span className="font-semibold text-slate-900">{p.name}</span>
-              {p.stack?.trim() ? (
-                <span className="text-slate-700"> | {p.stack}</span>
-              ) : null}
-            </div>
-
-            {(p.bullets ?? []).filter((b) => b.trim()).length ? (
-              <ul className="mt-1 list-disc pl-5 text-slate-800">
-                {p.bullets.filter((b) => b.trim()).map((b, i) => (
-                  <li key={i} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ),
-      });
-    });
-  }
-
-  if ((data.skillBlocks ?? []).length) {
-    blocks.push({
-      key: "skills-title",
-      node: <SectionHeading title="Skills" customize={customize} />,
-    });
-
-    data.skillBlocks.forEach((b) => {
-      blocks.push({
-        key: `skill-${b.id}`,
-        node: (
-          <div className="mt-2">
-            <div className="font-semibold text-slate-900">{b.title}</div>
-            <div className="text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-              {b.kind === "text" ? (b.text ?? "") : (b.items ?? []).join(", ")}
-            </div>
-          </div>
-        ),
-      });
-    });
-  }
-
-  if (hasAny(data.achievements)) {
-    blocks.push({
-      key: "ach-title",
-      node: <SectionHeading title="Awards / Achievements" customize={customize} />,
-    });
-
-    blocks.push({
-      key: "ach-list",
-      node: (
-        <ul className="mt-2 list-disc pl-5 text-slate-800">
-          {(data.achievements ?? []).filter((a) => a.trim()).map((a, i) => (
-            <li key={i} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-              {a}
-            </li>
+      {(data.location ?? "").trim() ? (
+        <div style={{ marginTop: "2px", color: "#475569" }}>{data.location.trim()}</div>
+      ) : null}
+      {contactItems.length > 0 ? (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: "4px", marginTop: "6px", color: "#334155" }}>
+          {contactItems.map((item, i) => (
+            <React.Fragment key={i}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                {item.icon}
+                {item.href ? (
+                  <a href={item.href} style={{ color: "#334155", textDecoration: "none" }}>{item.label}</a>
+                ) : (
+                  <span>{item.label}</span>
+                )}
+              </span>
+            </React.Fragment>
           ))}
-        </ul>
-      ),
-    });
-  }
+        </div>
+      ) : null}
+      {data.summary?.trim() ? (
+        <div
+          style={{ marginTop: "6px", fontSize: "12px", color: "#475569", overflowWrap: "anywhere", wordBreak: "break-word" }}
+          dangerouslySetInnerHTML={{ __html: injectBulletStyles(data.summary.trim()) }}
+        />
+      ) : null}
+    </div>
+  );
 
   const customLabel = (data.customSectionTitle ?? "").trim() || "Custom";
-  if ((data.custom?.length ?? 0) > 0 || (data.customSectionTitle ?? "").trim()) {
-    blocks.push({
-      key: "custom-title",
-      node: <SectionHeading title={customLabel} customize={customize} />,
-    });
+  const order = customize.sectionOrder ?? PREVIEW_DEFAULT_ORDER;
 
-    (data.custom ?? []).forEach((c) => {
+  for (const key of order) {
+    if (key === "basics") {
+      blocks.push({ key: "header", node: headerNode });
+    } else if (key === "education" && (data.education ?? []).length) {
+      blocks.push({ key: "edu-title", node: <SectionHeading title="Education" customize={customize} /> });
+      data.education.forEach((e) => {
+        blocks.push({
+          key: `edu-${e.id}`,
+          node: (
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-semibold text-slate-900">{e.school}</div>
+                <div className="text-slate-700">{formatRange(e.start, e.end)}</div>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-slate-800">{[e.degree, e.field].filter(Boolean).join(" in ")}</div>
+                {e.city?.trim() ? <div className="text-slate-700">{e.city}</div> : null}
+              </div>
+              {e.coursework?.trim() ? (
+                <div className="text-slate-700" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: `Coursework: ${e.coursework.trim()}` }} />
+              ) : null}
+            </div>
+          ),
+        });
+      });
+    } else if (key === "experience" && (data.experience ?? []).length) {
+      blocks.push({ key: "exp-title", node: <SectionHeading title="Work Experience" customize={customize} /> });
+      data.experience.forEach((x) => {
+        blocks.push({
+          key: `exp-${x.id}`,
+          node: (
+            <div className="mt-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-semibold text-slate-900">{x.title}</div>
+                <div className="text-slate-700">{formatRange(x.start, x.end)}</div>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="italic text-slate-800">{x.company}</div>
+                {x.location?.trim() ? <div className="italic text-slate-700">{x.location}</div> : null}
+              </div>
+              {x.bulletsHtml?.trim() ? (
+                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(x.bulletsHtml.trim()) }} />
+              ) : null}
+            </div>
+          ),
+        });
+      });
+    } else if (key === "projects" && (data.projects ?? []).length) {
+      blocks.push({ key: "proj-title", node: <SectionHeading title="Projects" customize={customize} /> });
+      data.projects.forEach((p) => {
+        blocks.push({
+          key: `proj-${p.id}`,
+          node: (
+            <div className="mt-2">
+              <div>
+                <span className="font-semibold text-slate-900">{p.name}</span>
+                {p.stack?.trim() ? <span className="text-slate-700"> | {p.stack}</span> : null}
+              </div>
+              {p.bulletsHtml?.trim() ? (
+                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(p.bulletsHtml.trim()) }} />
+              ) : null}
+            </div>
+          ),
+        });
+      });
+    } else if (key === "skills" && (data.skillBlocks ?? []).length) {
+      blocks.push({ key: "skills-title", node: <SectionHeading title="Skills" customize={customize} /> });
+      data.skillBlocks.forEach((b) => {
+        blocks.push({
+          key: `skill-${b.id}`,
+          node: (
+            <div className="mt-2" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+              <span className="font-semibold text-slate-900">{b.title}: </span>
+              {b.kind === "text" ? (
+                <span className="text-slate-800" dangerouslySetInnerHTML={{ __html: injectBulletStyles(b.text ?? "") }} />
+              ) : (
+                <span className="text-slate-800">{(b.items ?? []).join(", ")}</span>
+              )}
+            </div>
+          ),
+        });
+      });
+    } else if (key === "achievements" && hasAny(data.achievements)) {
+      blocks.push({ key: "ach-title", node: <SectionHeading title="Awards / Achievements" customize={customize} /> });
       blocks.push({
-        key: `custom-${c.id}`,
+        key: "ach-list",
         node: (
-          <div className="mt-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="font-semibold text-slate-900">{c.title}</div>
-              <div className="text-slate-700">{formatRange(c.start, c.end)}</div>
-            </div>
-            <div className="italic text-slate-800">
-              {joinParts([c.subtitle, c.location], " • ")}
-            </div>
-
-            {c.mode === "text" ? (
-              c.text?.trim() ? (
-                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                  {c.text.trim()}
-                </div>
-              ) : null
-            ) : (c.bullets ?? []).filter((b) => b.trim()).length ? (
-              <ul className="mt-1 list-disc pl-5 text-slate-800">
-                {c.bullets.filter((b) => b.trim()).map((b, i) => (
-                  <li key={i} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+          <div className="mt-2 space-y-1">
+            {(data.achievements ?? []).filter((a) => a.trim()).map((a, i) => (
+              <div key={i} className="text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(a.trim()) }} />
+            ))}
           </div>
         ),
       });
-    });
+    } else if (key === "custom" && ((data.custom?.length ?? 0) > 0 || (data.customSectionTitle ?? "").trim())) {
+      blocks.push({ key: "custom-title", node: <SectionHeading title={customLabel} customize={customize} /> });
+      (data.custom ?? []).forEach((c) => {
+        blocks.push({
+          key: `custom-${c.id}`,
+          node: (
+            <div className="mt-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-semibold text-slate-900">{c.title}</div>
+                <div className="text-slate-700">{formatRange(c.start, c.end)}</div>
+              </div>
+              <div className="italic text-slate-800">{joinParts([c.subtitle, c.location], " • ")}</div>
+              {c.mode === "text" ? (
+                c.text?.trim() ? (
+                  <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.text.trim()) }} />
+                ) : null
+              ) : c.bulletsHtml?.trim() ? (
+                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.bulletsHtml.trim()) }} />
+              ) : null}
+            </div>
+          ),
+        });
+      });
+    }
   }
 
   return blocks;
 }
 
-export default function OverleafTabsPreview({
-  data,
-  customize,
-}: {
-  data: ResumeData;
-  customize: ResumeCustomize;
-}) {
+export type OverleafTabsPreviewHandle = {
+  download: () => Promise<void>;
+};
+
+const OverleafTabsPreview = React.forwardRef<
+  OverleafTabsPreviewHandle,
+  { data: ResumeData; customize: ResumeCustomize }
+>(function OverleafTabsPreview({ data, customize }, ref) {
   const baseFontPx = useMemo(() => ptToPx(customize.fontSizePt), [customize.fontSizePt]);
 
   const padX = useMemo(() => mmToPx(customize.marginXmm), [customize.marginXmm]);
@@ -421,17 +360,13 @@ export default function OverleafTabsPreview({
     }
 
     const heights = kids.map((el) => {
-      const rect = el.getBoundingClientRect();
       const computedStyle = window.getComputedStyle(el);
       const marginTop = parseFloat(computedStyle.marginTop) || 0;
       const marginBottom = parseFloat(computedStyle.marginBottom) || 0;
-      return Math.max(rect.height + marginTop + marginBottom, 0);
+      return Math.max(el.offsetHeight + marginTop + marginBottom, 0);
     });
 
-    // Calculate total height to verify we need pagination
-    const totalHeight = heights.reduce((sum, h, i) => {
-      return sum + h + (i > 0 ? customize.entryGapPx : 0);
-    }, 0);
+    const lineH = baseFontPx * customize.lineHeight;
 
     const nextPages: Block[][] = [];
     let current: Block[] = [];
@@ -439,22 +374,16 @@ export default function OverleafTabsPreview({
 
     blocks.forEach((b, i) => {
       const h = heights[i] ?? 0;
-      
-      // Calculate the space needed: block height + gap (if not first on page)
       const gap = current.length > 0 ? customize.entryGapPx : 0;
       const spaceNeeded = h + gap;
 
-      // If adding this block would exceed page height, start a new page
-      // Subtract 40px safety buffer to account for sub-pixel/font measurement inaccuracies
-      if (current.length > 0 && used + spaceNeeded > contentH - 40) {
+      if (current.length > 0 && used + spaceNeeded > contentH - lineH * 6) {
         nextPages.push(current);
         current = [];
         used = 0;
       }
 
-      // Add the block to current page
       current.push(b);
-      // Update used height: add gap (if not first) + block height
       used += (current.length === 1 ? 0 : customize.entryGapPx) + h;
     });
 
@@ -537,16 +466,70 @@ export default function OverleafTabsPreview({
     return (LETTER_H * numPages + 24 * (numPages - 1)) * scale;
   }, [pages.length, scale]);
 
+  useImperativeHandle(ref, () => ({
+    download: async () => {
+      const pageEls = containerRef.current?.querySelectorAll<HTMLElement>("[data-resume-page]");
+      if (!pageEls || pageEls.length === 0) return;
+
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+
+      const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "portrait" });
+
+      for (let i = 0; i < pageEls.length; i++) {
+        const canvas = await html2canvas(pageEls[i], {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: "#ffffff",
+          onclone: (clonedDoc) => {
+            // html2canvas can't parse modern CSS color functions (lab, oklch, etc.)
+            // used by Tailwind v4. Remove any stylesheet containing them.
+            Array.from(clonedDoc.querySelectorAll("style")).forEach((el) => {
+              if (
+                el.textContent?.includes("lab(") ||
+                el.textContent?.includes("oklch(") ||
+                el.textContent?.includes("oklab(")
+              ) {
+                el.remove();
+              }
+            });
+            // Also remove external stylesheets (Tailwind CDN / compiled CSS)
+            Array.from(clonedDoc.querySelectorAll('link[rel="stylesheet"]')).forEach((el) => el.remove());
+          },
+        });
+        const img = canvas.toDataURL("image/jpeg", 0.97);
+        if (i > 0) doc.addPage("letter", "portrait");
+        doc.addImage(img, "JPEG", 0, 0, 612, 792);
+      }
+
+      doc.save("resume.pdf");
+    },
+  }));
+
   return (
     <div ref={containerRef} className="w-full flex flex-col items-center min-h-0 relative">
+      <style>{`
+        .resume-preview ul { list-style: none; padding-left: 0.6em; margin: 0; }
+        .resume-preview ol { list-style: none; padding-left: 0.6em; margin: 0; }
+        .resume-preview li { padding-left: 0.9em; text-indent: -0.9em; margin: 0; }
+        .resume-preview li::before { content: "• "; }
+        .resume-preview li p { display: inline; margin: 0; }
+        .resume-preview p { margin: 0; }
+        .resume-preview a { text-decoration: underline; }
+      `}</style>
       {/* Hidden measurement layer — outside the scale transform so heights are true 1× */}
       <div
         ref={measureRef}
         aria-hidden
+        className="resume-preview"
         style={{
           ...commonTextStyle,
-          position: "absolute",
-          left: -99999,
+          width: contentW,
+          position: "fixed",
+          left: -contentW - 100,
           top: 0,
           visibility: "hidden",
           pointerEvents: "none",
@@ -581,7 +564,8 @@ export default function OverleafTabsPreview({
           {pages.map((pageBlocks, pageIdx) => (
             <div
               key={pageIdx}
-              className="bg-white shadow"
+              data-resume-page
+            className="bg-white shadow-md"
               style={{
                 width: LETTER_W,
                 height: LETTER_H,
@@ -593,7 +577,7 @@ export default function OverleafTabsPreview({
                 boxSizing: "border-box",
               }}
             >
-              <div style={{ ...commonTextStyle, height: contentH, overflow: "hidden" }}>
+              <div className="resume-preview" style={{ ...commonTextStyle, height: contentH }}>
                 {pageBlocks.map((b, i) => (
                   <div
                     key={b.key}
@@ -612,5 +596,6 @@ export default function OverleafTabsPreview({
       </div>
     </div>
   );
-}
+});
+export default OverleafTabsPreview;
 
