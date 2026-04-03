@@ -150,7 +150,7 @@ function ResumeContent({ data }: { data: ResumeData }) {
 
   const showCustom = (data.custom ?? []).some((c) => {
     const core = [c.title, c.subtitle, c.location, c.start, c.end].some((x) => clean(x));
-    if (c.mode === "bullets") return core || hasAny(c.bullets);
+    if (c.mode === "bullets") return core || (c.bulletsHtml ?? "").trim().length > 0;
     return core || !!clean(c.text);
   });
 
