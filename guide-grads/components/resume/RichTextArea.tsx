@@ -1,11 +1,11 @@
 "use client";
 
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import TextAlign from "@tiptap/extension-text-align";
-import { useEffect, useCallback } from "react";
+import Underline from "@tiptap/extension-underline";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { useCallback, useEffect } from "react";
 
 type Props = {
   label?: string;
@@ -75,7 +75,9 @@ export default function RichTextArea({ label, value, onChange, placeholder }: Pr
     const current = editor.getHTML();
     const incoming = value || "";
     if (current !== incoming && incoming !== "<p></p>") {
-      editor.commands.setContent(incoming, false, { preserveWhitespace: true });
+      editor.commands.setContent(incoming, {
+  parseOptions: { preserveWhitespace: true },
+});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
