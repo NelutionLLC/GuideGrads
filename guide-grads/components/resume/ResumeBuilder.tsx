@@ -23,13 +23,21 @@ type Education = {
   start: string;
   end: string;
   city: string;
+  /** Shown after date and location on the meta line, e.g. … | … | 3.8 GPA */
+  gpa?: string;
   coursework?: string;
 };
 
-type Project = {
+export type Project = {
   id: string;
   name: string;
+  /** Shown on its own line below the title / tech line when no dates; with dates, combined into subtitle with stack */
+  subtitle?: string;
   stack: string;
+  /** When start/end are filled, project uses the same entry layouts as education / experience */
+  start?: string;
+  end?: string;
+  location?: string;
   bulletsHtml: string;
 };
 
@@ -92,22 +100,37 @@ type HeadingCaps = "capitalize" | "uppercase";
 type HeadingSize = "s" | "m" | "l" | "xl";
 type HeadingIcons = "none" | "outline" | "filled";
 type HeadingLineWeight = "light" | "normal" | "bold";
-type EntryLayout = "standard" | "meta-left" | "compact" | "stacked";
+/** Entry header lines: title/subtitle vs date/location */
+export type EntryLayout = "l1" | "l2" | "l3" | "l4" | "l5";
 type EntrySubtitleStyle = "normal" | "bold" | "italic";
-type EntrySubtitlePlacement = "same-line" | "next-line";
-type EntryDatePlacement = "same-line" | "next-line";
+/** Order of title vs subtitle on entry lines (education, experience, projects, custom) */
+export type EntryListingTitleOrder = "titleFirst" | "subtitleFirst";
+/** Order of date vs location on shared meta lines */
+export type EntryListingMetaOrder = "dateFirst" | "locationFirst";
+/** Top-of-page name / contact block (not section titles like EDUCATION) */
+export type HeaderLayout =
+  | "stackCenter" /** All centered: name, location, then contacts */
+  | "centerRow2" /** Name centered; location + contacts on one row below */
+  | "splitRight" /** Name & location left; contacts stacked right */
+  | "nameThenInline"; /** Name on first line; location + contacts inline on second */
 
 export type ResumeCustomize = {
   // spacing
   fontSizePt: number; // 8–12 typical
-  lineHeight: number; // 1.05–1.35 typical
+  lineHeight: number; // 1.1–2.0 (unitless CSS line-height)
   marginXmm: number; // left/right
   marginYmm: number; // top/bottom
-  entryGapPx: number; // spacing between entries
+  /** Section margin level 1–20; preview maps to px (1→6px, +1 per step, 20→25px). */
+  sectionGapPx: number;
+  /** Vertical gap between entries within a section (two jobs, two schools, etc.) */
+  entryGapPx: number;
 
   // font
   fontKind: FontFamilyKind; // sans/serif/mono
   fontName: string; // chosen label
+
+  // profile header (name, location, contacts)
+  headerLayout: HeaderLayout;
 
   // section headings
   headingStyle: HeadingStyle;
@@ -115,11 +138,10 @@ export type ResumeCustomize = {
   headingSize: HeadingSize;
   headingIcons: HeadingIcons;
   headingLineWeight: HeadingLineWeight;
-  // entry layout
   entryLayout: EntryLayout;
   entrySubtitleStyle: EntrySubtitleStyle;
-  entrySubtitlePlacement: EntrySubtitlePlacement;
-  entryDatePlacement: EntryDatePlacement;
+  entryListingTitleOrder: EntryListingTitleOrder;
+  entryListingMetaOrder: EntryListingMetaOrder;
   sectionOrder: string[];
 };
 
@@ -151,20 +173,23 @@ const defaultCustomize: ResumeCustomize = {
   lineHeight: 1.15,
   marginXmm: 12,
   marginYmm: 12,
+  sectionGapPx: 9,
   entryGapPx: 10,
 
   fontKind: "sans",
   fontName: "Lato",
+
+  headerLayout: "stackCenter",
 
   headingStyle: "rule",
   headingCaps: "capitalize",
   headingSize: "m",
   headingIcons: "none",
   headingLineWeight: "light",
-  entryLayout: "standard",
+  entryLayout: "l1",
   entrySubtitleStyle: "italic",
-  entrySubtitlePlacement: "next-line",
-  entryDatePlacement: "next-line",
+  entryListingTitleOrder: "titleFirst",
+  entryListingMetaOrder: "dateFirst",
   sectionOrder: ["basics", "skills", "experience", "education", "projects", "achievements", "custom"],
 };
 
@@ -496,6 +521,28 @@ function ChoicePill({
 /** ---------------- Component ---------------- */
 type TabKey = "content" | "customize" | "ai";
 
+/** Calendar + map pin for entry layout picker (wireframe style) */
+function EntryLayoutThumbCal() {
+  return (
+    <svg aria-hidden className="shrink-0 text-white/50" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="3.5" y="5.5" width="17" height="15" rx="2" />
+      <path d="M16 3v4M8 3v4M3 11h18" strokeLinecap="round" />
+    </svg>
+  );
+}
+function EntryLayoutThumbPin() {
+  return (
+    <svg aria-hidden className="shrink-0 text-white/50" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M12 21s7-4.35 7-10a7 7 0 1 0-14 0c0 5.65 7 10 7 10Z" />
+      <circle cx="12" cy="11" r="2" fill="currentColor" className="text-white/35" stroke="none" />
+    </svg>
+  );
+}
+/** Short horizontal “dash” line */
+function ThumbDash({ className = "w-7" }: { className?: string }) {
+  return <div className={`h-0.5 shrink-0 rounded-sm bg-white/45 ${className}`} />;
+}
+
 export default function ResumeBuilder() {
   /** IMPORTANT: do NOT read localStorage during render (prevents hydration mismatch) */
   const [data, setData] = useState<ResumeData>(emptyResume);
@@ -509,7 +556,32 @@ export default function ResumeBuilder() {
       if (raw) {
         const parsed = JSON.parse(raw) as { data?: ResumeData; customize?: ResumeCustomize; updatedAt?: number };
         if (parsed?.data) setData({ ...emptyResume, ...parsed.data });
-        if (parsed?.customize) setCustomize({ ...defaultCustomize, ...parsed.customize });
+        if (parsed?.customize) {
+          const merged = { ...defaultCustomize, ...parsed.customize };
+          const el = merged.entryLayout as string;
+          merged.entryLayout =
+            el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
+          const hl = merged.headerLayout as string;
+          merged.headerLayout =
+            hl === "stackCenter" || hl === "centerRow2" || hl === "splitRight" || hl === "nameThenInline"
+              ? hl
+              : hl === "split"
+                ? "splitRight"
+                : hl === "centered"
+                  ? "stackCenter"
+                  : "stackCenter";
+          const tlo = merged.entryListingTitleOrder as string;
+          merged.entryListingTitleOrder = tlo === "subtitleFirst" ? "subtitleFirst" : "titleFirst";
+          const mlo = merged.entryListingMetaOrder as string;
+          merged.entryListingMetaOrder = mlo === "locationFirst" ? "locationFirst" : "dateFirst";
+          merged.lineHeight = clamp(Number(merged.lineHeight) || defaultCustomize.lineHeight, 1.1, 2);
+          merged.sectionGapPx = clamp(
+            Number.isFinite(Number(merged.sectionGapPx)) ? Number(merged.sectionGapPx) : defaultCustomize.sectionGapPx,
+            1,
+            20
+          );
+          setCustomize(merged);
+        }
       }
     } catch {
       // ignore
@@ -786,7 +858,7 @@ export default function ResumeBuilder() {
     const id = uid();
     setData((p) => ({
       ...p,
-      education: [...p.education, { id, school: "", degree: "", field: "", start: "", end: "", city: "", coursework: "" }],
+      education: [...p.education, { id, school: "", degree: "", field: "", start: "", end: "", city: "", gpa: "", coursework: "" }],
     }));
     setOpenEduId(id);
   }
@@ -818,7 +890,10 @@ export default function ResumeBuilder() {
     setVisible((p) => ({ ...p, projects: true }));
     setOpenProjects(true);
     const id = uid();
-    setData((p) => ({ ...p, projects: [...p.projects, { id, name: "", stack: "", bulletsHtml: "" }] }));
+    setData((p) => ({
+      ...p,
+      projects: [...p.projects, { id, name: "", subtitle: "", stack: "", start: "", end: "", location: "", bulletsHtml: "" }],
+    }));
     setOpenProjId(id);
   }
   function updateProject(id: string, patch: Partial<Project>) {
@@ -1114,6 +1189,7 @@ export default function ResumeBuilder() {
                         <TextInput label="Degree" value={e.degree} onChange={(v) => updateEducation(e.id, { degree: v })} />
                         <TextInput label="Field" value={e.field} onChange={(v) => updateEducation(e.id, { field: v })} />
                         <TextInput label="City" value={e.city} onChange={(v) => updateEducation(e.id, { city: v })} />
+                        <TextInput label="GPA (optional)" value={e.gpa ?? ""} onChange={(v) => updateEducation(e.id, { gpa: v })} />
                         <TextInput label="Start" value={e.start} onChange={(v) => updateEducation(e.id, { start: v })} />
                         <TextInput label="End" value={e.end} onChange={(v) => updateEducation(e.id, { end: v })} />
                         <div className="sm:col-span-2">
@@ -1174,7 +1250,11 @@ export default function ResumeBuilder() {
                     <div className="rounded-2xl bg-white/5 p-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <TextInput label="Project name" value={p.name} onChange={(v) => updateProject(p.id, { name: v })} />
+                        <TextInput label="Subtitle (optional)" value={p.subtitle ?? ""} onChange={(v) => updateProject(p.id, { subtitle: v })} />
                         <TextInput label="Tech stack" value={p.stack} onChange={(v) => updateProject(p.id, { stack: v })} />
+                        <TextInput label="Start (optional)" value={p.start ?? ""} onChange={(v) => updateProject(p.id, { start: v })} />
+                        <TextInput label="End (optional)" value={p.end ?? ""} onChange={(v) => updateProject(p.id, { end: v })} />
+                        <TextInput label="Location (optional)" value={p.location ?? ""} onChange={(v) => updateProject(p.id, { location: v })} />
                         <div className="sm:col-span-2">
                           <RichTextArea label="Bullets" value={p.bulletsHtml ?? ""} onChange={(v) => updateProject(p.id, { bulletsHtml: v })} placeholder="Add bullet points..." />
                         </div>
@@ -1433,14 +1513,22 @@ export default function ResumeBuilder() {
                     />
                     <SliderRow
                       label="Line Height"
-                      valueLabel={`${customize.lineHeight.toFixed(2)}`}
-                      min={1.05}
-                      max={1.35}
-                      step={0.01}
+                      valueLabel={customize.lineHeight.toFixed(1)}
+                      min={1.1}
+                      max={2}
+                      step={0.1}
                       value={customize.lineHeight}
-                      onChange={(v) => setCustomizePatch({ lineHeight: v })}
-                      onMinus={() => setCustomizePatch({ lineHeight: clamp(Number((customize.lineHeight - 0.01).toFixed(2)), 1.05, 1.35) })}
-                      onPlus={() => setCustomizePatch({ lineHeight: clamp(Number((customize.lineHeight + 0.01).toFixed(2)), 1.05, 1.35) })}
+                      onChange={(v) => setCustomizePatch({ lineHeight: clamp(Math.round(v * 10) / 10, 1.1, 2) })}
+                      onMinus={() =>
+                        setCustomizePatch({
+                          lineHeight: clamp(Number((customize.lineHeight - 0.1).toFixed(1)), 1.1, 2),
+                        })
+                      }
+                      onPlus={() =>
+                        setCustomizePatch({
+                          lineHeight: clamp(Number((customize.lineHeight + 0.1).toFixed(1)), 1.1, 2),
+                        })
+                      }
                     />
                     <SliderRow
                       label="Left & Right Margin"
@@ -1465,7 +1553,18 @@ export default function ResumeBuilder() {
                       onPlus={() => setCustomizePatch({ marginYmm: clamp(customize.marginYmm + 1, 6, 20) })}
                     />
                     <SliderRow
-                      label="Space between Entries"
+                      label="Section Margin"
+                      valueLabel={`${customize.sectionGapPx + 4}px`}
+                      min={1}
+                      max={20}
+                      step={1}
+                      value={customize.sectionGapPx}
+                      onChange={(v) => setCustomizePatch({ sectionGapPx: clamp(v, 1, 20) })}
+                      onMinus={() => setCustomizePatch({ sectionGapPx: clamp(customize.sectionGapPx - 1, 1, 20) })}
+                      onPlus={() => setCustomizePatch({ sectionGapPx: clamp(customize.sectionGapPx + 1, 1, 20) })}
+                    />
+                    <SliderRow
+                      label="Entity Margin"
                       valueLabel={`${customize.entryGapPx}px`}
                       min={0}
                       max={24}
@@ -1525,6 +1624,89 @@ export default function ResumeBuilder() {
 
                   <div className="mt-3 text-xs text-white/50">
                     Note: Font names apply via CSS stack. If you want exact font files (Google Fonts), import them in your app.
+                  </div>
+                </div>
+
+                {/* Profile header (name + contacts) — separate from section heading styles below */}
+                <div className="rounded-3xl bg-white/5 p-5">
+                  <div className="text-3xl font-extrabold">Profile header</div>
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={() => setCustomizePatch({ headerLayout: "stackCenter" })}
+                      className={[
+                        "rounded-xl border p-3 flex items-center justify-center transition-colors min-h-[64px]",
+                        customize.headerLayout === "stackCenter" ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                      ].join(" ")}
+                      aria-label="Stacked centered header layout"
+                    >
+                      <div className="flex flex-col items-center gap-0.5 w-full px-0.5">
+                        <div className="w-10 h-2 rounded-sm bg-white/60" />
+                        <div className="w-6 h-1 rounded-sm bg-white/35" />
+                        <div className="flex gap-0.5 justify-center mt-0.5">
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomizePatch({ headerLayout: "centerRow2" })}
+                      className={[
+                        "rounded-xl border p-3 flex items-center justify-center transition-colors min-h-[64px]",
+                        customize.headerLayout === "centerRow2" ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                      ].join(" ")}
+                      aria-label="Name with location and contacts on second row"
+                    >
+                      <div className="flex flex-col items-center gap-0.5 w-full px-0.5">
+                        <div className="w-10 h-2 rounded-sm bg-white/60" />
+                        <div className="flex items-center justify-center gap-0.5 w-full flex-wrap">
+                          <div className="w-5 h-1 rounded-sm bg-white/35" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomizePatch({ headerLayout: "splitRight" })}
+                      className={[
+                        "rounded-xl border p-3 flex items-center justify-center transition-colors min-h-[64px]",
+                        customize.headerLayout === "splitRight" ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                      ].join(" ")}
+                      aria-label="Name left, contacts right"
+                    >
+                      <div className="flex items-start justify-between w-full gap-1 px-0.5">
+                        <div className="flex flex-col gap-0.5 items-start min-w-0">
+                          <div className="w-7 h-2 rounded-sm bg-white/60" />
+                          <div className="w-5 h-1 rounded-sm bg-white/35" />
+                        </div>
+                        <div className="flex flex-col gap-0.5 items-end shrink-0">
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomizePatch({ headerLayout: "nameThenInline" })}
+                      className={[
+                        "rounded-xl border p-3 flex items-center justify-center transition-colors min-h-[64px]",
+                        customize.headerLayout === "nameThenInline" ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                      ].join(" ")}
+                      aria-label="Name then location and contacts inline"
+                    >
+                      <div className="flex flex-col items-stretch gap-0.5 w-full px-0.5">
+                        <div className="w-full h-2 rounded-sm bg-white/60" />
+                        <div className="flex flex-wrap items-center gap-0.5">
+                          <div className="w-6 h-1 rounded-sm bg-white/35" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                        </div>
+                      </div>
+                    </button>
                   </div>
                 </div>
 
@@ -1606,34 +1788,102 @@ export default function ResumeBuilder() {
                   </div>
                 </div>
 
-                {/* Title & Subtitle */}
+                {/* Entry lines (education / experience / etc.) */}
                 <div className="rounded-3xl bg-white/5 p-5">
-                  <div className="text-3xl font-extrabold">Title &amp; Subtitle</div>
+                  <div className="text-3xl font-extrabold">Entry layout</div>
 
                   <div className="mt-4 space-y-5">
-                    {/* Layout */}
                     <div>
-                      <div className="text-sm font-semibold text-white/80">Layout</div>
-                      <div className="mt-2 grid grid-cols-4 gap-2">
+                      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         {([
-                          { key: "standard", thumb: (
-                            <><div className="flex items-center justify-between w-full gap-1"><div className="flex-1 flex flex-col gap-1"><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35" /></div><div className="flex gap-0.5 shrink-0"><div className="w-2.5 h-2.5 rounded-sm border border-white/40" /><div className="w-2.5 h-2.5 rounded-full border border-white/40" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
-                          )},
-                          { key: "meta-left", thumb: (
-                            <><div className="flex items-start gap-1 w-full"><div className="flex flex-col gap-0.5 shrink-0"><div className="w-2.5 h-2.5 rounded-sm border border-white/40" /><div className="w-2.5 h-2.5 rounded-full border border-white/40 mt-0.5" /></div><div className="flex-1 flex flex-col gap-1 ml-1"><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
-                          )},
-                          { key: "compact", thumb: (
-                            <><div className="flex items-center justify-between w-full gap-1"><div className="flex items-center gap-1"><div className="w-6 h-1.5 rounded-sm bg-white/60" /><div className="w-4 h-1 rounded-sm bg-white/35" /></div><div className="flex gap-0.5 shrink-0"><div className="w-2.5 h-1.5 rounded-sm bg-white/30" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
-                          )},
-                          { key: "stacked", thumb: (
-                            <><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35 mt-1" /><div className="w-10 h-1 rounded-sm bg-white/25 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /></>
-                          )},
-                        ] as { key: string; thumb: React.ReactNode }[]).map(({ key, thumb }) => (
+                          {
+                            key: "l1" as const,
+                            thumb: (
+                              <div className="flex w-full min-h-[40px] items-center justify-between gap-2">
+                                <div className="flex items-center gap-1">
+                                  <ThumbDash className="w-6" />
+                                  <ThumbDash className="w-5" />
+                                </div>
+                                <div className="flex shrink-0 items-center gap-0.5">
+                                  <EntryLayoutThumbCal />
+                                  <EntryLayoutThumbPin />
+                                </div>
+                              </div>
+                            ),
+                          },
+                          {
+                            key: "l2" as const,
+                            thumb: (
+                              <div className="flex w-full min-h-[40px] items-start justify-between gap-3">
+                                <div className="flex flex-col gap-1">
+                                  <ThumbDash className="w-6" />
+                                  <ThumbDash className="w-5" />
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <EntryLayoutThumbCal />
+                                  <EntryLayoutThumbPin />
+                                </div>
+                              </div>
+                            ),
+                          },
+                          {
+                            key: "l3" as const,
+                            thumb: (
+                              <div className="flex w-full min-h-[40px] flex-col gap-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1">
+                                    <ThumbDash className="w-5" />
+                                    <ThumbDash className="w-4" />
+                                  </div>
+                                  <EntryLayoutThumbCal />
+                                </div>
+                                <div className="flex justify-end">
+                                  <EntryLayoutThumbPin />
+                                </div>
+                              </div>
+                            ),
+                          },
+                          {
+                            key: "l4" as const,
+                            thumb: (
+                              <div className="flex w-full min-h-[40px] items-start justify-between gap-3">
+                                <div className="flex flex-col gap-1">
+                                  <EntryLayoutThumbCal />
+                                  <EntryLayoutThumbPin />
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <ThumbDash className="w-8" />
+                                  <ThumbDash className="w-7" />
+                                </div>
+                              </div>
+                            ),
+                          },
+                          {
+                            key: "l5" as const,
+                            thumb: (
+                              <div className="flex w-full min-h-[44px] flex-col gap-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <EntryLayoutThumbCal />
+                                  <ThumbDash className="w-5" />
+                                  <EntryLayoutThumbPin />
+                                </div>
+                                <div className="flex justify-center">
+                                  <ThumbDash className="w-5" />
+                                </div>
+                              </div>
+                            ),
+                          },
+                        ]).map(({ key, thumb }) => (
                           <button
                             key={key}
                             type="button"
-                            onClick={() => setCustomizePatch({ entryLayout: key as EntryLayout })}
-                            className={["rounded-xl border p-2 flex flex-col items-start gap-1 transition-colors min-h-[60px] justify-center", customize.entryLayout === key ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10"].join(" ")}
+                            aria-pressed={customize.entryLayout === key}
+                            aria-label={`Select entry layout ${key}`}
+                            onClick={() => setCustomizePatch({ entryLayout: key })}
+                            className={[
+                              "rounded-xl border px-3 py-3 transition-colors flex w-full items-center justify-center min-h-[52px]",
+                              customize.entryLayout === key ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                            ].join(" ")}
                           >
                             {thumb}
                           </button>
@@ -1641,7 +1891,6 @@ export default function ResumeBuilder() {
                       </div>
                     </div>
 
-                    {/* Subtitle style */}
                     <div>
                       <div className="text-sm font-semibold text-white/80">Subtitle style</div>
                       <div className="mt-2 flex gap-2">
@@ -1651,21 +1900,57 @@ export default function ResumeBuilder() {
                       </div>
                     </div>
 
-                    {/* Subtitle placement */}
-                    <div>
-                      <div className="text-sm font-semibold text-white/80">Subtitle placement</div>
-                      <div className="mt-2 flex gap-2">
-                        <ChoicePill active={customize.entrySubtitlePlacement === "same-line"} label="Same Line" onClick={() => setCustomizePatch({ entrySubtitlePlacement: "same-line" })} />
-                        <ChoicePill active={customize.entrySubtitlePlacement === "next-line"} label="Next Line" onClick={() => setCustomizePatch({ entrySubtitlePlacement: "next-line" })} />
-                      </div>
-                    </div>
-
-                    {/* Date & location placement */}
-                    <div>
-                      <div className="text-sm font-semibold text-white/80">Date &amp; Location placement</div>
-                      <div className="mt-2 flex gap-2">
-                        <ChoicePill active={customize.entryDatePlacement === "same-line"} label="Same Line" onClick={() => setCustomizePatch({ entryDatePlacement: "same-line" })} />
-                        <ChoicePill active={customize.entryDatePlacement === "next-line"} label="Next Line" onClick={() => setCustomizePatch({ entryDatePlacement: "next-line" })} />
+                    <div className="mt-5">
+                      <div className="text-sm font-semibold text-white/80">Listing type</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          aria-pressed={customize.entryListingTitleOrder === "titleFirst"}
+                          aria-label="Title then subtitle"
+                          onClick={() => setCustomizePatch({ entryListingTitleOrder: "titleFirst" })}
+                          className={[
+                            "rounded-xl border px-2 py-2.5 text-center text-xs font-medium transition-colors min-h-[44px] flex items-center justify-center",
+                            customize.entryListingTitleOrder === "titleFirst" ? "border-teal-400 bg-teal-500/20 text-teal-200" : "border-white/20 bg-white/5 text-white/75 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          Title, Subtitle
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={customize.entryListingTitleOrder === "subtitleFirst"}
+                          aria-label="Subtitle then title"
+                          onClick={() => setCustomizePatch({ entryListingTitleOrder: "subtitleFirst" })}
+                          className={[
+                            "rounded-xl border px-2 py-2.5 text-center text-xs font-medium transition-colors min-h-[44px] flex items-center justify-center",
+                            customize.entryListingTitleOrder === "subtitleFirst" ? "border-teal-400 bg-teal-500/20 text-teal-200" : "border-white/20 bg-white/5 text-white/75 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          Subtitle, Title
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={customize.entryListingMetaOrder === "dateFirst"}
+                          aria-label="Date then location"
+                          onClick={() => setCustomizePatch({ entryListingMetaOrder: "dateFirst" })}
+                          className={[
+                            "rounded-xl border px-2 py-2.5 text-center text-xs font-medium transition-colors min-h-[44px] flex items-center justify-center",
+                            customize.entryListingMetaOrder === "dateFirst" ? "border-teal-400 bg-teal-500/20 text-teal-200" : "border-white/20 bg-white/5 text-white/75 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          Date | Location
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={customize.entryListingMetaOrder === "locationFirst"}
+                          aria-label="Location then date"
+                          onClick={() => setCustomizePatch({ entryListingMetaOrder: "locationFirst" })}
+                          className={[
+                            "rounded-xl border px-2 py-2.5 text-center text-xs font-medium transition-colors min-h-[44px] flex items-center justify-center",
+                            customize.entryListingMetaOrder === "locationFirst" ? "border-teal-400 bg-teal-500/20 text-teal-200" : "border-white/20 bg-white/5 text-white/75 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          Location | Date
+                        </button>
                       </div>
                     </div>
                   </div>
