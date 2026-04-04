@@ -55,7 +55,7 @@ export default function RichTextArea({ label, value, onChange, placeholder }: Pr
     extensions: [
       StarterKit.configure({ heading: false, code: false, codeBlock: false }),
       Underline,
-      Link.configure({ openOnClick: false }),
+      Link.configure({ openOnClick: false, autolink: false }),
       TextAlign.configure({ types: ["paragraph"] }),
     ],
     content: value || "",

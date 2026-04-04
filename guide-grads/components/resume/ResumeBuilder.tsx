@@ -87,10 +87,15 @@ export type ResumeData = {
 
 /** ---------------- Customize Types ---------------- */
 type FontFamilyKind = "sans" | "serif" | "mono";
-type HeadingStyle = "rule" | "boxed" | "underline" | "split";
+type HeadingStyle = "rule" | "boxed" | "underline" | "split" | "plain" | "double" | "leftbar" | "centered";
 type HeadingCaps = "capitalize" | "uppercase";
 type HeadingSize = "s" | "m" | "l" | "xl";
 type HeadingIcons = "none" | "outline" | "filled";
+type HeadingLineWeight = "light" | "normal" | "bold";
+type EntryLayout = "standard" | "meta-left" | "compact" | "stacked";
+type EntrySubtitleStyle = "normal" | "bold" | "italic";
+type EntrySubtitlePlacement = "same-line" | "next-line";
+type EntryDatePlacement = "same-line" | "next-line";
 
 export type ResumeCustomize = {
   // spacing
@@ -109,6 +114,12 @@ export type ResumeCustomize = {
   headingCaps: HeadingCaps;
   headingSize: HeadingSize;
   headingIcons: HeadingIcons;
+  headingLineWeight: HeadingLineWeight;
+  // entry layout
+  entryLayout: EntryLayout;
+  entrySubtitleStyle: EntrySubtitleStyle;
+  entrySubtitlePlacement: EntrySubtitlePlacement;
+  entryDatePlacement: EntryDatePlacement;
   sectionOrder: string[];
 };
 
@@ -149,6 +160,11 @@ const defaultCustomize: ResumeCustomize = {
   headingCaps: "capitalize",
   headingSize: "m",
   headingIcons: "none",
+  headingLineWeight: "light",
+  entryLayout: "standard",
+  entrySubtitleStyle: "italic",
+  entrySubtitlePlacement: "next-line",
+  entryDatePlacement: "next-line",
   sectionOrder: ["basics", "skills", "experience", "education", "projects", "achievements", "custom"],
 };
 
@@ -416,13 +432,13 @@ function SliderRow({
   onPlus: () => void;
 }) {
   return (
-    <div className="rounded-2xl bg-white p-5 text-slate-900 shadow-sm">
+    <div className="rounded-2xl bg-white/5 p-4">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold">{label}</div>
-        <div className="text-base text-slate-500">{valueLabel}</div>
+        <div className="text-sm font-semibold text-white">{label}</div>
+        <div className="text-sm text-white/60">{valueLabel}</div>
       </div>
 
-      <div className="mt-4 flex items-center gap-4">
+      <div className="mt-3 flex items-center gap-3">
         <input
           type="range"
           min={min}
@@ -430,20 +446,20 @@ function SliderRow({
           step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full"
+          className="w-full accent-teal-400"
         />
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onMinus}
-            className="h-11 w-11 rounded-xl border border-slate-200 text-2xl leading-none hover:bg-slate-50"
+            className="h-9 w-9 rounded-xl border border-white/20 text-xl leading-none text-white hover:bg-white/10"
             type="button"
           >
             −
           </button>
           <button
             onClick={onPlus}
-            className="h-11 w-11 rounded-xl border border-slate-200 text-2xl leading-none hover:bg-slate-50"
+            className="h-9 w-9 rounded-xl border border-white/20 text-xl leading-none text-white hover:bg-white/10"
             type="button"
           >
             +
@@ -467,7 +483,7 @@ function ChoicePill({
     <button
       className={[
         "rounded-xl border px-4 py-2 text-sm",
-        active ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+        active ? "border-teal-400 bg-teal-500/20 text-teal-300 font-medium" : "border-white/20 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
       ].join(" ")}
       onClick={onClick}
       type="button"
@@ -864,9 +880,24 @@ export default function ResumeBuilder() {
   const customLabel = data.customSectionTitle?.trim() ? data.customSectionTitle.trim() : "Custom";
 
   /** ---------------- Customize Lists ---------------- */
-  const fontSans = ["Lato", "Inter", "Roboto", "Open Sans", "Work Sans", "Source Sans Pro", "Nunito", "Rubik"];
-  const fontSerif = ["Merriweather", "Georgia", "Times New Roman", "Libre Baskerville"];
-  const fontMono = ["JetBrains Mono", "IBM Plex Mono", "Menlo", "Courier New"];
+  const fontSans = [
+    "Source Sans Pro", "Karla", "Mulish",
+    "Lato", "Titillium Web", "Work Sans",
+    "Barlow", "Jost", "Fira Sans",
+    "Roboto", "Rubik", "Asap",
+    "Nunito", "Open Sans", "IBM Plex Sans",
+  ];
+  const fontSerif = [
+    "Lora", "Source Serif Pro", "Zilla Slab",
+    "PT Serif", "Literata", "EB Garamond",
+    "Aleo", "Crimson Pro", "Cormorant Garamond",
+    "Vollkorn", "Amiri", "Crimson Text",
+    "Alegreya",
+  ];
+  const fontMono = [
+    "Inconsolata", "Source Code Pro", "IBM Plex Mono",
+    "Overpass Mono", "Space Mono", "Courier Prime",
+  ];
 
   const fontList =
     customize.fontKind === "serif" ? fontSerif : customize.fontKind === "mono" ? fontMono : fontSans;
@@ -1452,9 +1483,33 @@ export default function ResumeBuilder() {
                   <div className="text-3xl font-extrabold">Font</div>
 
                   <div className="mt-4 grid grid-cols-3 gap-3">
-                    <ChoicePill active={customize.fontKind === "serif"} label="Serif" onClick={() => setCustomizePatch({ fontKind: "serif", fontName: "Merriweather" })} />
-                    <ChoicePill active={customize.fontKind === "sans"} label="Sans" onClick={() => setCustomizePatch({ fontKind: "sans", fontName: "Lato" })} />
-                    <ChoicePill active={customize.fontKind === "mono"} label="Mono" onClick={() => setCustomizePatch({ fontKind: "mono", fontName: "JetBrains Mono" })} />
+                    {([
+                      { kind: "serif",  label: "Serif", fontStyle: "font-serif",  defaultFont: "Lora" },
+                      { kind: "sans",   label: "Sans",  fontStyle: "font-sans",   defaultFont: "Lato" },
+                      { kind: "mono",   label: "Mono",  fontStyle: "font-mono",   defaultFont: "Inconsolata" },
+                    ] as { kind: FontFamilyKind; label: string; fontStyle: string; defaultFont: string }[]).map(({ kind, label, fontStyle, defaultFont }) => {
+                      const active = customize.fontKind === kind;
+                      return (
+                        <button
+                          key={kind}
+                          type="button"
+                          onClick={() => setCustomizePatch({ fontKind: kind, fontName: defaultFont })}
+                          className={[
+                            "flex flex-col items-center justify-center gap-1.5 rounded-2xl border py-4 transition-colors",
+                            active
+                              ? "border-teal-400 bg-teal-500/20"
+                              : "border-white/20 bg-white/5 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          <span className={`${fontStyle} text-3xl font-semibold leading-none ${active ? "text-teal-300" : "text-white/70"}`}>
+                            Aa
+                          </span>
+                          <span className={`text-sm font-medium ${active ? "text-teal-300" : "text-white/60"}`}>
+                            {label}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -1480,11 +1535,51 @@ export default function ResumeBuilder() {
                   <div className="mt-4 space-y-5">
                     <div>
                       <div className="text-sm font-semibold text-white/80">Style</div>
-                      <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <ChoicePill active={customize.headingStyle === "rule"} label="Rule" onClick={() => setCustomizePatch({ headingStyle: "rule" })} />
-                        <ChoicePill active={customize.headingStyle === "boxed"} label="Boxed" onClick={() => setCustomizePatch({ headingStyle: "boxed" })} />
-                        <ChoicePill active={customize.headingStyle === "underline"} label="Underline" onClick={() => setCustomizePatch({ headingStyle: "underline" })} />
-                        <ChoicePill active={customize.headingStyle === "split"} label="Split" onClick={() => setCustomizePatch({ headingStyle: "split" })} />
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                        {([
+                          { key: "rule", thumb: (
+                            <><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-full h-px bg-white/40" /><div className="w-6 h-1 rounded-sm bg-white/25" /><div className="w-9 h-1 rounded-sm bg-white/25" /></>
+                          )},
+                          { key: "boxed", thumb: (
+                            <><div className="w-full rounded bg-white/30 py-1 flex items-center justify-center"><div className="w-7 h-1.5 rounded-sm bg-white/70" /></div><div className="w-6 h-1 rounded-sm bg-white/25 mt-1" /><div className="w-9 h-1 rounded-sm bg-white/25" /></>
+                          )},
+                          { key: "underline", thumb: (
+                            <><div className="flex flex-col items-start gap-0.5"><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-8 h-px bg-white/50" /></div><div className="w-6 h-1 rounded-sm bg-white/25" /><div className="w-9 h-1 rounded-sm bg-white/25" /></>
+                          )},
+                          { key: "split", thumb: (
+                            <><div className="flex items-center gap-1 w-full"><div className="w-5 h-1.5 rounded-sm bg-white/60 shrink-0" /><div className="flex-1 h-px bg-white/40" /></div><div className="w-6 h-1 rounded-sm bg-white/25" /><div className="w-9 h-1 rounded-sm bg-white/25" /></>
+                          )},
+                          { key: "plain", thumb: (
+                            <><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/25 mt-1" /><div className="w-9 h-1 rounded-sm bg-white/25" /></>
+                          )},
+                          { key: "double", thumb: (
+                            <><div className="w-full h-px bg-white/40" /><div className="w-8 h-1.5 rounded-sm bg-white/60 mt-0.5" /><div className="w-full h-px bg-white/40 mt-0.5" /><div className="w-6 h-1 rounded-sm bg-white/25 mt-1" /></>
+                          )},
+                          { key: "leftbar", thumb: (
+                            <div className="flex items-start gap-1 w-full"><div className="w-0.5 h-full min-h-[28px] bg-white/50 rounded-full shrink-0" /><div className="flex flex-col gap-1 flex-1"><div className="w-7 h-1.5 rounded-sm bg-white/60" /><div className="w-5 h-1 rounded-sm bg-white/25" /><div className="w-8 h-1 rounded-sm bg-white/25" /></div></div>
+                          )},
+                          { key: "centered", thumb: (
+                            <><div className="flex items-center gap-1 w-full"><div className="flex-1 h-px bg-white/40" /><div className="w-6 h-1.5 rounded-sm bg-white/60 shrink-0" /><div className="flex-1 h-px bg-white/40" /></div><div className="flex justify-center gap-1 mt-1"><div className="w-5 h-1 rounded-sm bg-white/25" /><div className="w-7 h-1 rounded-sm bg-white/25" /></div></>
+                          )},
+                        ] as { key: string; thumb: React.ReactNode }[]).map(({ key, thumb }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setCustomizePatch({ headingStyle: key as HeadingStyle })}
+                            className={["rounded-xl border p-2 flex flex-col items-start gap-1.5 transition-colors min-h-[56px] justify-center", customize.headingStyle === key ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10"].join(" ")}
+                          >
+                            {thumb}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold text-white/80">Line Thickness</div>
+                      <div className="mt-2 flex gap-2">
+                        <ChoicePill active={(customize.headingLineWeight ?? "light") === "light"} label="Light" onClick={() => setCustomizePatch({ headingLineWeight: "light" })} />
+                        <ChoicePill active={(customize.headingLineWeight ?? "light") === "normal"} label="Normal" onClick={() => setCustomizePatch({ headingLineWeight: "normal" })} />
+                        <ChoicePill active={(customize.headingLineWeight ?? "light") === "bold"} label="Bold" onClick={() => setCustomizePatch({ headingLineWeight: "bold" })} />
                       </div>
                     </div>
 
@@ -1508,12 +1603,69 @@ export default function ResumeBuilder() {
                       </div>
                     </div>
 
+                  </div>
+                </div>
+
+                {/* Title & Subtitle */}
+                <div className="rounded-3xl bg-white/5 p-5">
+                  <div className="text-3xl font-extrabold">Title &amp; Subtitle</div>
+
+                  <div className="mt-4 space-y-5">
+                    {/* Layout */}
                     <div>
-                      <div className="text-sm font-semibold text-white/80">Icons</div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <ChoicePill active={customize.headingIcons === "none"} label="None" onClick={() => setCustomizePatch({ headingIcons: "none" })} />
-                        <ChoicePill active={customize.headingIcons === "outline"} label="Outline" onClick={() => setCustomizePatch({ headingIcons: "outline" })} />
-                        <ChoicePill active={customize.headingIcons === "filled"} label="Filled" onClick={() => setCustomizePatch({ headingIcons: "filled" })} />
+                      <div className="text-sm font-semibold text-white/80">Layout</div>
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                        {([
+                          { key: "standard", thumb: (
+                            <><div className="flex items-center justify-between w-full gap-1"><div className="flex-1 flex flex-col gap-1"><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35" /></div><div className="flex gap-0.5 shrink-0"><div className="w-2.5 h-2.5 rounded-sm border border-white/40" /><div className="w-2.5 h-2.5 rounded-full border border-white/40" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
+                          )},
+                          { key: "meta-left", thumb: (
+                            <><div className="flex items-start gap-1 w-full"><div className="flex flex-col gap-0.5 shrink-0"><div className="w-2.5 h-2.5 rounded-sm border border-white/40" /><div className="w-2.5 h-2.5 rounded-full border border-white/40 mt-0.5" /></div><div className="flex-1 flex flex-col gap-1 ml-1"><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
+                          )},
+                          { key: "compact", thumb: (
+                            <><div className="flex items-center justify-between w-full gap-1"><div className="flex items-center gap-1"><div className="w-6 h-1.5 rounded-sm bg-white/60" /><div className="w-4 h-1 rounded-sm bg-white/35" /></div><div className="flex gap-0.5 shrink-0"><div className="w-2.5 h-1.5 rounded-sm bg-white/30" /></div></div><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20" /></>
+                          )},
+                          { key: "stacked", thumb: (
+                            <><div className="w-8 h-1.5 rounded-sm bg-white/60" /><div className="w-6 h-1 rounded-sm bg-white/35 mt-1" /><div className="w-10 h-1 rounded-sm bg-white/25 mt-1" /><div className="w-full h-1 rounded-sm bg-white/20 mt-1" /></>
+                          )},
+                        ] as { key: string; thumb: React.ReactNode }[]).map(({ key, thumb }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setCustomizePatch({ entryLayout: key as EntryLayout })}
+                            className={["rounded-xl border p-2 flex flex-col items-start gap-1 transition-colors min-h-[60px] justify-center", customize.entryLayout === key ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10"].join(" ")}
+                          >
+                            {thumb}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Subtitle style */}
+                    <div>
+                      <div className="text-sm font-semibold text-white/80">Subtitle style</div>
+                      <div className="mt-2 flex gap-2">
+                        <ChoicePill active={customize.entrySubtitleStyle === "normal"} label="Normal" onClick={() => setCustomizePatch({ entrySubtitleStyle: "normal" })} />
+                        <ChoicePill active={customize.entrySubtitleStyle === "bold"} label="Bold" onClick={() => setCustomizePatch({ entrySubtitleStyle: "bold" })} />
+                        <ChoicePill active={customize.entrySubtitleStyle === "italic"} label="Italic" onClick={() => setCustomizePatch({ entrySubtitleStyle: "italic" })} />
+                      </div>
+                    </div>
+
+                    {/* Subtitle placement */}
+                    <div>
+                      <div className="text-sm font-semibold text-white/80">Subtitle placement</div>
+                      <div className="mt-2 flex gap-2">
+                        <ChoicePill active={customize.entrySubtitlePlacement === "same-line"} label="Same Line" onClick={() => setCustomizePatch({ entrySubtitlePlacement: "same-line" })} />
+                        <ChoicePill active={customize.entrySubtitlePlacement === "next-line"} label="Next Line" onClick={() => setCustomizePatch({ entrySubtitlePlacement: "next-line" })} />
+                      </div>
+                    </div>
+
+                    {/* Date & location placement */}
+                    <div>
+                      <div className="text-sm font-semibold text-white/80">Date &amp; Location placement</div>
+                      <div className="mt-2 flex gap-2">
+                        <ChoicePill active={customize.entryDatePlacement === "same-line"} label="Same Line" onClick={() => setCustomizePatch({ entryDatePlacement: "same-line" })} />
+                        <ChoicePill active={customize.entryDatePlacement === "next-line"} label="Next Line" onClick={() => setCustomizePatch({ entryDatePlacement: "next-line" })} />
                       </div>
                     </div>
                   </div>
