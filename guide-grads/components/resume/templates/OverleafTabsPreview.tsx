@@ -12,6 +12,8 @@ const LETTER_H = 11 * 96; // 1056
 
 function injectBulletStyles(html: string): string {
   return html
+    // Strip <a> tags but keep their text content (no hyperlinks in resume body)
+    .replace(/<a\b[^>]*>(.*?)<\/a>/gi, "$1")
     .replace(/<ul>/g, '<ul style="list-style:none;padding-left:0;margin:0">')
     .replace(/<ol>/g, '<ol style="list-style:none;padding-left:0;margin:0">')
     .replace(/<li>/g, '<li style="padding-left:0.9em;text-indent:-0.9em;margin:0">')
@@ -22,9 +24,6 @@ function injectBulletStyles(html: string): string {
     .replace(/<p>•/g, '<p style="padding-left:0.9em;text-indent:-0.9em;margin:0">•');
 }
 
-function joinParts(parts: (string | undefined | null)[], sep = " • ") {
-  return parts.map((x) => (x ?? "").trim()).filter(Boolean).join(sep);
-}
 
 function formatRange(start?: string, end?: string) {
   const s = (start ?? "").trim();
@@ -58,7 +57,7 @@ function IconMail() {
 function IconLinkedIn() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
-      <path d="M4.98 3.5C4.98 4.88 3.87 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5ZM0 8h5v16H0V8Zm7.5 0H12v2.2h.07C12.8 8.9 14.46 8 16.5 8c4.48 0 5.5 3 5.5 6.8V24h-5v-8.4c0-2-.04-4.57-2.78-4.57-2.79 0-3.22 2.18-3.22 4.43V24H7.5V8Z" />
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
     </svg>
   );
 }
@@ -95,15 +94,228 @@ function SectionHeading({
   const txt =
     customize.headingCaps === "uppercase" ? title.toUpperCase() : title;
 
+  const baseFontPx = (customize.fontSizePt * 96) / 72;
+  const headingOffset = customize.headingSize === "s" ? 3 : customize.headingSize === "l" ? 5 : customize.headingSize === "xl" ? 6 : 4;
+  const sizeStyle: React.CSSProperties = {
+    fontSize: `${baseFontPx + headingOffset}px`,
+    fontWeight: 800,
+    letterSpacing: "0.04em",
+    lineHeight: 1.2,
+    color: "#0f172a",
+  };
+
+  const lw = customize.headingLineWeight ?? "light";
+  const lineColor = lw === "bold" ? "#0f172a" : lw === "normal" ? "#334155" : "#cbd5e1";
+  const lineThickness = lw === "bold" ? "2.5px" : lw === "normal" ? "1.5px" : "1px";
+  const lineStyle: React.CSSProperties = { height: lineThickness, background: lineColor, width: "100%" };
+
+  const style = customize.headingStyle ?? "rule";
+
+  if (style === "boxed") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+        <div style={{ ...sizeStyle, background: "#e2e8f0", width: "100%", padding: "4px 8px", textAlign: "center", boxSizing: "border-box" }}>{txt}</div>
+      </div>
+    );
+  }
+
+  if (style === "underline") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+        <div style={{ ...sizeStyle, borderBottom: `${lineThickness} solid ${lineColor}`, paddingBottom: "4px", display: "inline-block" }}>{txt}</div>
+      </div>
+    );
+  }
+
+  if (style === "split") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
+        <div style={lineStyle} />
+      </div>
+    );
+  }
+
+  if (style === "plain") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+        <div style={sizeStyle}>{txt}</div>
+      </div>
+    );
+  }
+
+  if (style === "double") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+        <div style={lineStyle} />
+        <div style={{ ...sizeStyle, marginTop: "5px", marginBottom: "5px" }}>{txt}</div>
+        <div style={lineStyle} />
+      </div>
+    );
+  }
+
+  if (style === "leftbar") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "stretch", gap: "8px" }}>
+        <div style={{ width: lineThickness === "1px" ? "3px" : lineThickness === "1.5px" ? "4px" : "5px", background: lineColor, borderRadius: "2px", flexShrink: 0 }} />
+        <div style={sizeStyle}>{txt}</div>
+      </div>
+    );
+  }
+
+  if (style === "centered") {
+    return (
+      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={lineStyle} />
+        <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
+        <div style={lineStyle} />
+      </div>
+    );
+  }
+
+  // default: "rule"
   return (
-    <div style={{ paddingTop: "20px" }}>
-      <div className="text-slate-900 font-extrabold tracking-wide">{txt}</div>
-      <div className="mt-2 h-px w-full bg-slate-300" />
+    <div style={{ paddingTop: "20px", lineHeight: 1 }}>
+      <div style={sizeStyle}>{txt}</div>
+      <div style={{ marginTop: "5px", marginBottom: "8px", ...lineStyle }} />
     </div>
   );
 }
 
 const PREVIEW_DEFAULT_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
+
+function renderEntryHeader(
+  title: string,
+  subtitle: string | undefined,
+  dateStr: string,
+  location: string | undefined,
+  customize: ResumeCustomize
+): React.ReactNode {
+  const layout = customize.entryLayout ?? "standard";
+  const subStyle = customize.entrySubtitleStyle ?? "italic";
+  const subPlacement = customize.entrySubtitlePlacement ?? "next-line";
+  const datePlacement = customize.entryDatePlacement ?? "next-line";
+
+  const subCss: React.CSSProperties = {
+    fontStyle: subStyle === "italic" ? "italic" : "normal",
+    fontWeight: subStyle === "bold" ? 700 : 400,
+    color: subStyle === "bold" ? "#1e293b" : "#475569",
+  };
+
+  const hasSub = !!subtitle?.trim();
+  const hasDate = !!dateStr?.trim();
+  const hasLoc = !!location?.trim();
+
+  // Layout 2: date/location stacked on left column, title/subtitle stacked on right
+  if (layout === "meta-left") {
+    return (
+      <div style={{ display: "flex", gap: "12px" }}>
+        <div style={{ minWidth: "90px", flexShrink: 0, color: "#334155" }}>
+          {hasDate && <div>{dateStr}</div>}
+          {hasLoc && <div>{location}</div>}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className="font-semibold text-slate-900">{title}</div>
+          {hasSub && <div style={subCss}>{subtitle}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // Layout 3: date | title | location in one row, subtitle below title
+  if (layout === "compact") {
+    return (
+      <div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
+          {hasDate && <div style={{ minWidth: "90px", flexShrink: 0, color: "#334155" }}>{dateStr}</div>}
+          <div style={{ flex: 1 }} className="font-semibold text-slate-900">{title}</div>
+          {hasLoc && <div style={{ flexShrink: 0, color: "#334155" }}>{location}</div>}
+        </div>
+        {hasSub && (
+          <div style={{ display: "flex", gap: "8px" }}>
+            {hasDate && <div style={{ minWidth: "90px", flexShrink: 0 }} />}
+            <div style={subCss}>{subtitle}</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Layout 4: title left / date·location combined right, subtitle below title
+  if (layout === "stacked") {
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
+          <div className="font-semibold text-slate-900">{title}</div>
+          {(hasDate || hasLoc) && (
+            <div style={{ flexShrink: 0, color: "#334155" }}>
+              {[dateStr, location].filter(Boolean).join(" | ")}
+            </div>
+          )}
+        </div>
+        {hasSub && <div style={subCss}>{subtitle}</div>}
+      </div>
+    );
+  }
+
+  // Layout 1 (standard): respects subPlacement + datePlacement
+  // subPlacement=same-line → subtitle inline after title
+  // datePlacement=next-line → date+location on their own row below
+  if (datePlacement === "next-line") {
+    return (
+      <div>
+        {subPlacement === "same-line" ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "baseline" }}>
+            <span className="font-semibold text-slate-900">{title}</span>
+            {hasSub && <span style={subCss}>{subtitle}</span>}
+          </div>
+        ) : (
+          <>
+            <div className="font-semibold text-slate-900">{title}</div>
+            {hasSub && <div style={subCss}>{subtitle}</div>}
+          </>
+        )}
+        {(hasDate || hasLoc) && (
+          <div style={{ color: "#334155" }}>{[dateStr, location].filter(Boolean).join(" · ")}</div>
+        )}
+      </div>
+    );
+  }
+
+  // standard + datePlacement=same-line
+  if (subPlacement === "same-line") {
+    return (
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "baseline" }}>
+          <span className="font-semibold text-slate-900">{title}</span>
+          {hasSub && <span style={subCss}>{subtitle}</span>}
+        </div>
+        {(hasDate || hasLoc) && (
+          <div style={{ flexShrink: 0, color: "#334155", textAlign: "right" }}>
+            {hasDate && <div>{dateStr}</div>}
+            {hasLoc && <div>{location}</div>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // standard + subPlacement=next-line + datePlacement=same-line (classic two-column)
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
+        <div className="font-semibold text-slate-900">{title}</div>
+        {hasDate && <div style={{ flexShrink: 0, color: "#334155" }}>{dateStr}</div>}
+      </div>
+      {(hasSub || hasLoc) && (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
+          {hasSub ? <div style={subCss}>{subtitle}</div> : <div />}
+          {hasLoc && <div style={{ flexShrink: 0, color: "#334155" }}>{location}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Build blocks (we paginate by block) */
 function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: number): Block[] {
@@ -122,16 +334,16 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         {(data.name ?? "").trim() || "Your Name"}
       </div>
       {(data.location ?? "").trim() ? (
-        <div style={{ marginTop: "2px", color: "#475569" }}>{data.location.trim()}</div>
+        <div style={{ marginTop: "2px", color: "#1a1a1a" }}>{data.location.trim()}</div>
       ) : null}
       {contactItems.length > 0 ? (
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: "4px", marginTop: "6px", color: "#334155" }}>
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: "4px", marginTop: "6px", color: "#1a1a1a" }}>
           {contactItems.map((item, i) => (
             <React.Fragment key={i}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
                 {item.icon}
                 {item.href ? (
-                  <a href={item.href} style={{ color: "#334155", textDecoration: "none" }}>{item.label}</a>
+                  <a href={item.href} style={{ color: "#1a1a1a", textDecoration: "none" }}>{item.label}</a>
                 ) : (
                   <span>{item.label}</span>
                 )}
@@ -142,7 +354,7 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
       ) : null}
       {data.summary?.trim() ? (
         <div
-          style={{ marginTop: "6px", fontSize: "12px", color: "#475569", overflowWrap: "anywhere", wordBreak: "break-word" }}
+          style={{ marginTop: "6px", fontSize: "12px", color: "#1a1a1a", overflowWrap: "anywhere", wordBreak: "break-word" }}
           dangerouslySetInnerHTML={{ __html: injectBulletStyles(data.summary.trim()) }}
         />
       ) : null}
@@ -162,16 +374,9 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
           key: `edu-${e.id}`,
           node: (
             <div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="font-semibold text-slate-900">{e.school}</div>
-                <div className="text-slate-700">{formatRange(e.start, e.end)}</div>
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="text-slate-800">{[e.degree, e.field].filter(Boolean).join(" in ")}</div>
-                {e.city?.trim() ? <div className="text-slate-700">{e.city}</div> : null}
-              </div>
+              {renderEntryHeader(e.school, [e.degree, e.field].filter(Boolean).join(" in "), formatRange(e.start, e.end), e.city, customize)}
               {e.coursework?.trim() ? (
-                <div className="text-slate-700" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: `Coursework: ${e.coursework.trim()}` }} />
+                <div className="text-slate-900" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: `Coursework: ${e.coursework.trim()}` }} />
               ) : null}
             </div>
           ),
@@ -183,15 +388,8 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         blocks.push({
           key: `exp-${x.id}`,
           node: (
-            <div className="mt-2">
-              <div className="flex items-start justify-between gap-3">
-                <div className="font-semibold text-slate-900">{x.title}</div>
-                <div className="text-slate-700">{formatRange(x.start, x.end)}</div>
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="italic text-slate-800">{x.company}</div>
-                {x.location?.trim() ? <div className="italic text-slate-700">{x.location}</div> : null}
-              </div>
+            <div>
+              {renderEntryHeader(x.title, x.company, formatRange(x.start, x.end), x.location, customize)}
               {x.bulletsHtml?.trim() ? (
                 <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(x.bulletsHtml.trim()) }} />
               ) : null}
@@ -205,11 +403,8 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         blocks.push({
           key: `proj-${p.id}`,
           node: (
-            <div className="mt-2">
-              <div>
-                <span className="font-semibold text-slate-900">{p.name}</span>
-                {p.stack?.trim() ? <span className="text-slate-700"> | {p.stack}</span> : null}
-              </div>
+            <div>
+              {renderEntryHeader(p.name, p.stack, "", undefined, customize)}
               {p.bulletsHtml?.trim() ? (
                 <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(p.bulletsHtml.trim()) }} />
               ) : null}
@@ -223,12 +418,12 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         blocks.push({
           key: `skill-${b.id}`,
           node: (
-            <div className="mt-2" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+            <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
               <span className="font-semibold text-slate-900">{b.title}: </span>
               {b.kind === "text" ? (
-                <span className="text-slate-800" dangerouslySetInnerHTML={{ __html: injectBulletStyles(b.text ?? "") }} />
+                <span className="text-slate-900" dangerouslySetInnerHTML={{ __html: injectBulletStyles(b.text ?? "") }} />
               ) : (
-                <span className="text-slate-800">{(b.items ?? []).join(", ")}</span>
+                <span className="text-slate-900">{(b.items ?? []).join(", ")}</span>
               )}
             </div>
           ),
@@ -239,9 +434,9 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
       blocks.push({
         key: "ach-list",
         node: (
-          <div className="mt-2 space-y-1">
+          <div className="space-y-1">
             {(data.achievements ?? []).filter((a) => a.trim()).map((a, i) => (
-              <div key={i} className="text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(a.trim()) }} />
+              <div key={i} className="text-slate-900" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(a.trim()) }} />
             ))}
           </div>
         ),
@@ -252,12 +447,8 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         blocks.push({
           key: `custom-${c.id}`,
           node: (
-            <div className="mt-2">
-              <div className="flex items-start justify-between gap-3">
-                <div className="font-semibold text-slate-900">{c.title}</div>
-                <div className="text-slate-700">{formatRange(c.start, c.end)}</div>
-              </div>
-              <div className="italic text-slate-800">{joinParts([c.subtitle, c.location], " • ")}</div>
+            <div>
+              {renderEntryHeader(c.title, c.subtitle, formatRange(c.start, c.end), c.location, customize)}
               {c.mode === "text" ? (
                 c.text?.trim() ? (
                   <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.text.trim()) }} />
@@ -295,21 +486,43 @@ const OverleafTabsPreview = React.forwardRef<
     const name = (customize.fontName?.trim() || "Lato") as keyof typeof fontVarMap;
   
     const fontVarMap: Record<string, string> = {
-      Lato: "var(--font-lato)",
-      Roboto: "var(--font-roboto)",
-      Nunito: "var(--font-nunito)",
-      "Open Sans": "var(--font-open-sans)",
-      "Work Sans": "var(--font-work-sans)",
+      // Sans
+      Lato:              "var(--font-lato)",
+      Roboto:            "var(--font-roboto)",
+      Nunito:            "var(--font-nunito)",
+      "Open Sans":       "var(--font-open-sans)",
+      "Work Sans":       "var(--font-work-sans)",
       "Source Sans Pro": "var(--font-source-sans)",
-      "IBM Plex Sans": "var(--font-ibm-plex)",
-      "Fira Sans": "var(--font-fira-sans)",
-      "Titillium Web": "var(--font-titillium)",
-      Rubik: "var(--font-rubik)",
-      Jost: "var(--font-jost)",
-      Karla: "var(--font-karla)",
-      Mulish: "var(--font-mulish)",
-      Barlow: "var(--font-barlow)",
-      Asap: "var(--font-asap)",
+      "IBM Plex Sans":   "var(--font-ibm-plex-sans)",
+      "Fira Sans":       "var(--font-fira-sans)",
+      "Titillium Web":   "var(--font-titillium)",
+      Rubik:             "var(--font-rubik)",
+      Jost:              "var(--font-jost)",
+      Karla:             "var(--font-karla)",
+      Mulish:            "var(--font-mulish)",
+      Barlow:            "var(--font-barlow)",
+      Asap:              "var(--font-asap)",
+      // Serif
+      Lora:                 "var(--font-lora)",
+      "Source Serif Pro":   "var(--font-source-serif)",
+      "Zilla Slab":         "var(--font-zilla-slab)",
+      "PT Serif":           "var(--font-pt-serif)",
+      Literata:             "var(--font-literata)",
+      "EB Garamond":        "var(--font-eb-garamond)",
+      Aleo:                 "var(--font-aleo)",
+      "Crimson Pro":        "var(--font-crimson-pro)",
+      "Cormorant Garamond": "var(--font-cormorant-garamond)",
+      Vollkorn:             "var(--font-vollkorn)",
+      Amiri:                "var(--font-amiri)",
+      "Crimson Text":       "var(--font-crimson-text)",
+      Alegreya:             "var(--font-alegreya)",
+      // Mono
+      Inconsolata:       "var(--font-inconsolata)",
+      "Source Code Pro": "var(--font-source-code)",
+      "IBM Plex Mono":   "var(--font-ibm-plex-mono)",
+      "Overpass Mono":   "var(--font-overpass-mono)",
+      "Space Mono":      "var(--font-space-mono)",
+      "Courier Prime":   "var(--font-courier-prime)",
     };
   
     const family = fontVarMap[name] ?? "var(--font-lato)";
@@ -471,38 +684,22 @@ const OverleafTabsPreview = React.forwardRef<
       const pageEls = containerRef.current?.querySelectorAll<HTMLElement>("[data-resume-page]");
       if (!pageEls || pageEls.length === 0) return;
 
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+      const [{ default: jsPDF }, { toJpeg }] = await Promise.all([
         import("jspdf"),
-        import("html2canvas"),
+        import("html-to-image"),
       ]);
 
       const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "portrait" });
 
       for (let i = 0; i < pageEls.length; i++) {
-        const canvas = await html2canvas(pageEls[i], {
-          scale: 2,
-          useCORS: true,
-          logging: false,
+        // html-to-image uses SVG foreignObject — handles all modern CSS including lab()/oklch()
+        const dataUrl = await toJpeg(pageEls[i], {
+          quality: 0.97,
           backgroundColor: "#ffffff",
-          onclone: (clonedDoc) => {
-            // html2canvas can't parse modern CSS color functions (lab, oklch, etc.)
-            // used by Tailwind v4. Remove any stylesheet containing them.
-            Array.from(clonedDoc.querySelectorAll("style")).forEach((el) => {
-              if (
-                el.textContent?.includes("lab(") ||
-                el.textContent?.includes("oklch(") ||
-                el.textContent?.includes("oklab(")
-              ) {
-                el.remove();
-              }
-            });
-            // Also remove external stylesheets (Tailwind CDN / compiled CSS)
-            Array.from(clonedDoc.querySelectorAll('link[rel="stylesheet"]')).forEach((el) => el.remove());
-          },
+          pixelRatio: 2,
         });
-        const img = canvas.toDataURL("image/jpeg", 0.97);
         if (i > 0) doc.addPage("letter", "portrait");
-        doc.addImage(img, "JPEG", 0, 0, 612, 792);
+        doc.addImage(dataUrl, "JPEG", 0, 0, 612, 792);
       }
 
       doc.save("resume.pdf");
@@ -518,7 +715,7 @@ const OverleafTabsPreview = React.forwardRef<
         .resume-preview li::before { content: "• "; }
         .resume-preview li p { display: inline; margin: 0; }
         .resume-preview p { margin: 0; }
-        .resume-preview a { text-decoration: underline; }
+        .resume-preview a { text-decoration: none; color: inherit; }
       `}</style>
       {/* Hidden measurement layer — outside the scale transform so heights are true 1× */}
       <div
