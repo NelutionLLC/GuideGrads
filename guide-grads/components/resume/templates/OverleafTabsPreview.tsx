@@ -1,7 +1,42 @@
 "use client";
 
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { EntryLayout, HeaderLayout, ResumeCustomize, ResumeData } from "../ResumeBuilder";
+import type { AccentApply, EntryLayout, HeaderLayout, Project, ResumeCustomize, ResumeData } from "../ResumeBuilder";
+
+const DEFAULT_ACCENT_HEX = "#0f172a";
+
+function normalizeAccentApply(a?: AccentApply | null): AccentApply {
+  return {
+    name: a?.name ?? true,
+    headings: a?.headings ?? true,
+    headingsLine: a?.headingsLine ?? true,
+    headerIcons: a?.headerIcons ?? false,
+    headerContactText: a?.headerContactText ?? false,
+    dotsBarsBubbles: a?.dotsBarsBubbles ?? false,
+    dates: a?.dates ?? false,
+    entryTitle: a?.entryTitle ?? false,
+    entrySubtitle: a?.entrySubtitle ?? false,
+    linkIcons: a?.linkIcons ?? false,
+  };
+}
+
+function resolveAccentHex(customize: ResumeCustomize): string {
+  const c = customize.accentColor?.trim();
+  if (c && /^#[0-9A-Fa-f]{6}$/i.test(c)) return c;
+  return DEFAULT_ACCENT_HEX;
+}
+
+function pickAccent(customize: ResumeCustomize, key: keyof AccentApply, fallback: string): string {
+  return normalizeAccentApply(customize.accentApply)[key] ? resolveAccentHex(customize) : fallback;
+}
+
+/** Bold primary line(s) in education / experience / project / custom entries. */
+function entryTitleStyle(customize: ResumeCustomize): React.CSSProperties {
+  return {
+    fontWeight: 600,
+    color: pickAccent(customize, "entryTitle", "#0f172a"),
+  };
+}
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
 const mmToPx = (mm: number) => (mm * 96) / 25.4;
@@ -30,6 +65,16 @@ function formatRange(start?: string, end?: string) {
   const e = (end ?? "").trim();
   if (!s && !e) return "";
   if (s && !e) return `${s} — Present`;
+  if (!s && e) return e;
+  return `${s} — ${e}`;
+}
+
+/** Projects: do not show "Present" when end date is empty — only start, or start — end when both set. */
+function formatProjectRange(start?: string, end?: string) {
+  const s = (start ?? "").trim();
+  const e = (end ?? "").trim();
+  if (!s && !e) return "";
+  if (s && !e) return s;
   if (!s && e) return e;
   return `${s} — ${e}`;
 }
@@ -81,45 +126,79 @@ function marginTopBeforeBlock(
   return entityGapPx;
 }
 
+/** Keeps header/contact SVGs aligned inside inline-flex rows (avoid inline + verticalAlign fighting items-center) */
+const CONTACT_ICON_SVG_STYLE: React.CSSProperties = { display: "block", flexShrink: 0 };
+
 function IconPhone() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1-.24c1.12.37 2.33.57 3.59.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.07 21 3 13.93 3 5a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.26.2 2.47.57 3.59a1 1 0 0 1-.24 1l-2.21 2.2Z" />
     </svg>
   );
 }
 function IconMail() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 4-8 5L4 8V6l8 5 8-5v2Z" />
     </svg>
   );
 }
 function IconLinkedIn() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
     </svg>
   );
 }
 function IconGlobe() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2Zm7.93 9h-3.16a15.7 15.7 0 0 0-1.1-5.02A8.03 8.03 0 0 1 19.93 11ZM12 4c.96 0 2.26 2.09 2.93 7H9.07C9.74 6.09 11.04 4 12 4ZM4.07 13h3.16c.2 1.83.62 3.56 1.1 5.02A8.03 8.03 0 0 1 4.07 13Zm3.16-2H4.07a8.03 8.03 0 0 1 4.26-5.02c-.48 1.46-.9 3.19-1.1 5.02ZM12 20c-.96 0-2.26-2.09-2.93-7h5.86C14.26 17.91 12.96 20 12 20Zm3.67-1.98c.48-1.46.9-3.19 1.1-5.02h3.16a8.03 8.03 0 0 1-4.26 5.02Z" />
     </svg>
   );
 }
 function IconGitHub() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M12 .5A12 12 0 0 0 0 12.78c0 5.44 3.44 10.05 8.2 11.68.6.12.82-.27.82-.58v-2.2c-3.34.75-4.04-1.66-4.04-1.66-.55-1.44-1.34-1.82-1.34-1.82-1.1-.78.08-.76.08-.76 1.2.09 1.84 1.27 1.84 1.27 1.08 1.9 2.83 1.35 3.52 1.03.1-.8.42-1.35.76-1.66-2.66-.31-5.46-1.38-5.46-6.12 0-1.35.46-2.45 1.22-3.31-.12-.31-.53-1.58.12-3.29 0 0 1-.33 3.3 1.27a11.1 11.1 0 0 1 6 0c2.3-1.6 3.3-1.27 3.3-1.27.65 1.71.24 2.98.12 3.29.76.86 1.22 1.96 1.22 3.31 0 4.76-2.8 5.8-5.48 6.11.43.39.82 1.16.82 2.34v3.46c0 .32.22.71.82.59A12.2 12.2 0 0 0 24 12.78 12 12 0 0 0 12 .5Z" />
     </svg>
   );
 }
 
+/** External link (project URL) — sized to sit on the title line */
+function IconExternalLink() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+/** Project URL icon — base layout; color comes from pickAccent(…, linkIcons, …) */
+const projectLinkAnchorStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  lineHeight: 1,
+};
+
 function IconLocation() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle", flexShrink: 0 }}>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={CONTACT_ICON_SVG_STYLE} aria-hidden>
       <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z" />
     </svg>
   );
@@ -131,6 +210,22 @@ function prettyLabel(url: string) {
 function ensureHttp(url: string) {
   if (!url) return "#";
   return url.startsWith("http") ? url : `https://${url}`;
+}
+
+/** Only treat as a clickable project link if it parses as http(s) and the host looks like a domain (has a dot, e.g. x.y). */
+function isLikelyWebUrl(input: string): boolean {
+  const s = input.trim();
+  if (!s) return false;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const host = u.hostname;
+    if (host === "localhost" || host.endsWith(".localhost")) return true;
+    return host.includes(".");
+  } catch {
+    return false;
+  }
 }
 
 function SectionHeading({
@@ -149,16 +244,18 @@ function SectionHeading({
 
   const baseFontPx = (customize.fontSizePt * 96) / 72;
   const headingOffset = customize.headingSize === "s" ? 3 : customize.headingSize === "l" ? 5 : customize.headingSize === "xl" ? 6 : 4;
+  const headingTextColor = pickAccent(customize, "headings", "#0f172a");
   const sizeStyle: React.CSSProperties = {
     fontSize: `${baseFontPx + headingOffset}px`,
     fontWeight: 800,
     letterSpacing: "0.04em",
     lineHeight: 1.2,
-    color: "#0f172a",
+    color: headingTextColor,
   };
 
   const lw = customize.headingLineWeight ?? "light";
-  const lineColor = lw === "bold" ? "#0f172a" : lw === "normal" ? "#334155" : "#cbd5e1";
+  const baseLineColor = lw === "bold" ? "#0f172a" : lw === "normal" ? "#334155" : "#cbd5e1";
+  const lineColor = pickAccent(customize, "headingsLine", baseLineColor);
   const lineThickness = lw === "bold" ? "2.5px" : lw === "normal" ? "1.5px" : "1px";
   const lineStyle: React.CSSProperties = { height: lineThickness, background: lineColor, width: "100%" };
 
@@ -347,19 +444,42 @@ function renderEntryHeader(
   /** When set (including ""), subtitle is user subtitle only; tech stays on the same line as the title */
   projectInlineTech?: string,
   /** Education: appended last on meta lines after date | location */
-  endMetaGpa?: string
+  endMetaGpa?: string,
+  /** Projects: optional URL shown as external-link icon after the project name */
+  projectLinkUrl?: string
 ): React.ReactNode {
   const layout = normalizeEntryLayout(customize.entryLayout);
   const subStyle = customize.entrySubtitleStyle ?? "italic";
+  const et = entryTitleStyle(customize);
+  const metaColor = pickAccent(customize, "dates", "#334155");
+  const subBase = subStyle === "bold" ? "#1e293b" : "#475569";
 
   const subCss: React.CSSProperties = {
     fontStyle: subStyle === "italic" ? "italic" : "normal",
     fontWeight: subStyle === "bold" ? 700 : 400,
-    color: subStyle === "bold" ? "#1e293b" : "#475569",
+    color: pickAccent(customize, "entrySubtitle", subBase),
+  };
+
+  const linkIconStyle: React.CSSProperties = {
+    ...projectLinkAnchorStyle,
+    color: pickAccent(customize, "linkIcons", "#475569"),
   };
 
   const projectMode = projectInlineTech !== undefined;
   const techDisplay = projectMode ? (projectInlineTech ?? "").trim() : "";
+  const linkTrim = (projectLinkUrl ?? "").trim();
+  const projectLinkIcon =
+    linkTrim && projectMode && isLikelyWebUrl(linkTrim) ? (
+      <a
+        href={ensureHttp(linkTrim)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Project link"
+        style={linkIconStyle}
+      >
+        <IconExternalLink />
+      </a>
+    ) : null;
 
   const hasSub = !!subtitle?.trim();
   const hasDate = !!dateStr?.trim();
@@ -378,7 +498,9 @@ function renderEntryHeader(
   /** First in order = bold (title role); second = subtitle style */
   const titleCommaSubtitle = titleFirst ? (
     <span style={{ overflowWrap: "anywhere" as const }}>
-      <span className="font-semibold text-slate-900">{title}</span>
+      <span className="font-semibold" style={et}>
+        {title}
+      </span>
       {hasSub && (
         <>
           <span className="text-slate-900">, </span>
@@ -390,20 +512,27 @@ function renderEntryHeader(
     <span style={{ overflowWrap: "anywhere" as const }}>
       {hasSub ? (
         <>
-          <span className="font-semibold text-slate-900">{subtitle}</span>
+          <span className="font-semibold" style={et}>
+            {subtitle}
+          </span>
           <span className="text-slate-900">, </span>
           <span style={subCss}>{title}</span>
         </>
       ) : (
-        <span className="font-semibold text-slate-900">{title}</span>
+        <span className="font-semibold" style={et}>
+          {title}
+        </span>
       )}
     </span>
   );
 
   /** Projects: name | tech — strong row (title role) vs soft row (subtitle role) */
   const projectTitleTechLineStrong = (
-    <span style={{ overflowWrap: "anywhere" as const }}>
-      <span className="font-semibold text-slate-900">{title}</span>
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1" style={{ overflowWrap: "anywhere" }}>
+      <span className="font-semibold" style={et}>
+        {title}
+      </span>
+      {projectLinkIcon}
       {techDisplay ? (
         <>
           <span className="text-slate-900"> | </span>
@@ -413,8 +542,9 @@ function renderEntryHeader(
     </span>
   );
   const projectTitleTechLineSoft = (
-    <span style={{ overflowWrap: "anywhere" as const }}>
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1" style={{ overflowWrap: "anywhere" }}>
       <span style={subCss}>{title}</span>
+      {projectLinkIcon}
       {techDisplay ? (
         <>
           <span className="text-slate-900"> | </span>
@@ -431,7 +561,11 @@ function renderEntryHeader(
     </>
   ) : (
     <>
-      {hasSub && <div className="font-semibold text-slate-900">{subtitle}</div>}
+      {hasSub && (
+        <div className="font-semibold" style={et}>
+          {subtitle}
+        </div>
+      )}
       <div>{hasSub ? projectTitleTechLineSoft : projectTitleTechLineStrong}</div>
     </>
   );
@@ -445,7 +579,7 @@ function renderEntryHeader(
           flexShrink: 0,
           width: ENTRY_META_COL,
           boxSizing: "border-box",
-          color: "#334155",
+          color: metaColor,
           lineHeight: ENTRY_META_LINE_HEIGHT,
           display: "flex",
           flexDirection: "column",
@@ -478,7 +612,7 @@ function renderEntryHeader(
           <div
             style={{
               flexShrink: 0,
-              color: "#334155",
+              color: metaColor,
               textAlign: "right",
               maxWidth: "50%",
               lineHeight: ENTRY_META_LINE_HEIGHT,
@@ -497,7 +631,7 @@ function renderEntryHeader(
       <div
         style={{
           flexShrink: 0,
-          color: "#334155",
+          color: metaColor,
           lineHeight: ENTRY_META_LINE_HEIGHT,
           maxWidth: "50%",
           display: "flex",
@@ -532,16 +666,22 @@ function renderEntryHeader(
           <div style={{ minWidth: 0 }}>
             {titleFirst ? (
               <>
-                <div className="font-semibold text-slate-900">{title}</div>
+                <div className="font-semibold" style={et}>
+                  {title}
+                </div>
                 {hasSub && <div style={subCss}>{subtitle}</div>}
               </>
             ) : hasSub ? (
               <>
-                <div className="font-semibold text-slate-900">{subtitle}</div>
+                <div className="font-semibold" style={et}>
+                  {subtitle}
+                </div>
                 <div style={subCss}>{title}</div>
               </>
             ) : (
-              <div className="font-semibold text-slate-900">{title}</div>
+              <div className="font-semibold" style={et}>
+                {title}
+              </div>
             )}
           </div>
         )}
@@ -585,16 +725,22 @@ function renderEntryHeader(
             projectTitleBody
           ) : titleFirst ? (
             <>
-              <div className="font-semibold text-slate-900">{title}</div>
+              <div className="font-semibold" style={et}>
+                {title}
+              </div>
               {hasSub && <div style={subCss}>{subtitle}</div>}
             </>
           ) : hasSub ? (
             <>
-              <div className="font-semibold text-slate-900">{subtitle}</div>
+              <div className="font-semibold" style={et}>
+                {subtitle}
+              </div>
               <div style={subCss}>{title}</div>
             </>
           ) : (
-            <div className="font-semibold text-slate-900">{title}</div>
+            <div className="font-semibold" style={et}>
+              {title}
+            </div>
           )}
         </div>
       </div>
@@ -637,23 +783,29 @@ function renderEntryHeader(
           marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
         }}
       >
-        <div style={{ color: "#334155", textAlign: "left" }}>{l5Col1}</div>
+        <div style={{ color: metaColor, textAlign: "left" }}>{l5Col1}</div>
         <div style={{ minWidth: 0 }}>
           {projectMode ? projectTitleBody : titleFirst ? (
             <>
-              <div className="font-semibold text-slate-900">{title}</div>
+              <div className="font-semibold" style={et}>
+                {title}
+              </div>
               {hasSub && <div style={subCss}>{subtitle}</div>}
             </>
           ) : hasSub ? (
             <>
-              <div className="font-semibold text-slate-900">{subtitle}</div>
+              <div className="font-semibold" style={et}>
+                {subtitle}
+              </div>
               <div style={subCss}>{title}</div>
             </>
           ) : (
-            <div className="font-semibold text-slate-900">{title}</div>
+            <div className="font-semibold" style={et}>
+              {title}
+            </div>
           )}
         </div>
-        <div style={{ color: "#334155", textAlign: "right", lineHeight: ENTRY_META_LINE_HEIGHT }}>
+        <div style={{ color: metaColor, textAlign: "right", lineHeight: ENTRY_META_LINE_HEIGHT }}>
           {hasGpa ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1px", lineHeight: ENTRY_META_LINE_HEIGHT }}>
               {metaDateFirst ? (
@@ -691,7 +843,7 @@ function renderEntryHeader(
         <div
           style={{
             flexShrink: 0,
-            color: "#334155",
+            color: metaColor,
             textAlign: "right",
             maxWidth: "50%",
             lineHeight: ENTRY_META_LINE_HEIGHT,
@@ -706,10 +858,11 @@ function renderEntryHeader(
 
 function projectSubtitleCss(customize: ResumeCustomize): React.CSSProperties {
   const subStyle = customize.entrySubtitleStyle ?? "italic";
+  const subBase = subStyle === "bold" ? "#1e293b" : "#475569";
   return {
     fontStyle: subStyle === "italic" ? "italic" : "normal",
     fontWeight: subStyle === "bold" ? 700 : 400,
-    color: subStyle === "bold" ? "#1e293b" : "#475569",
+    color: pickAccent(customize, "entrySubtitle", subBase),
   };
 }
 
@@ -723,14 +876,25 @@ function formatTechStackForDisplay(stack: string): string {
 }
 
 /** Projects: classic one-line preview when no date range; entry layouts when start/end are set */
-function renderProjectBlock(p: ResumeData["projects"][number], customize: ResumeCustomize): React.ReactNode {
-  const dateStr = formatRange(p.start, p.end);
+function renderProjectBlock(p: Project, customize: ResumeCustomize): React.ReactNode {
+  const dateStr = formatProjectRange(p.start, p.end);
   const hasDate = !!dateStr.trim();
   const name = (p.name ?? "").trim();
   const stackRaw = (p.stack ?? "").trim();
   const subtitle = (p.subtitle ?? "").trim();
   const loc = (p.location ?? "").trim();
   const techLine = formatTechStackForDisplay(stackRaw);
+  const linkRaw = (p.link ?? "").trim();
+  const linkHref = linkRaw && isLikelyWebUrl(linkRaw) ? linkRaw : "";
+  const projectLinkIconStyleResolved: React.CSSProperties = {
+    ...projectLinkAnchorStyle,
+    color: pickAccent(customize, "linkIcons", "#475569"),
+  };
+  const noDateLinkIcon = linkHref ? (
+    <a href={ensureHttp(linkHref)} target="_blank" rel="noopener noreferrer" aria-label="Project link" style={projectLinkIconStyleResolved}>
+      <IconExternalLink />
+    </a>
+  ) : null;
 
   const bullets =
     p.bulletsHtml?.trim() ? (
@@ -751,9 +915,13 @@ function renderProjectBlock(p: ResumeData["projects"][number], customize: Resume
   if (!hasDate) {
     const { titleFirst } = getListingOrders(customize);
     const subCssProps = projectSubtitleCss(customize);
+    const et = entryTitleStyle(customize);
     const nameLineStrong = (
-      <div className="text-slate-900">
-        <span className="font-semibold text-slate-900">{name || "Project"}</span>
+      <div className="inline-flex max-w-full flex-wrap items-center gap-x-1 text-slate-900">
+        <span className="font-semibold" style={et}>
+          {name || "Project"}
+        </span>
+        {noDateLinkIcon}
         {techLine ? (
           <>
             <span> | </span>
@@ -763,8 +931,9 @@ function renderProjectBlock(p: ResumeData["projects"][number], customize: Resume
       </div>
     );
     const nameLineSoft = (
-      <div className="text-slate-900">
+      <div className="inline-flex max-w-full flex-wrap items-center gap-x-1 text-slate-900">
         <span style={subCssProps}>{name || "Project"}</span>
+        {noDateLinkIcon}
         {techLine ? (
           <>
             <span> | </span>
@@ -783,7 +952,9 @@ function renderProjectBlock(p: ResumeData["projects"][number], customize: Resume
           </>
         ) : subtitle ? (
           <>
-            <div className="font-semibold text-slate-900">{subtitle}</div>
+            <div className="font-semibold" style={et}>
+              {subtitle}
+            </div>
             {nameLineSoft}
           </>
         ) : (
@@ -796,7 +967,7 @@ function renderProjectBlock(p: ResumeData["projects"][number], customize: Resume
 
   return (
     <div>
-      {renderEntryHeader(name, subtitle || undefined, dateStr, loc || undefined, customize, techLine)}
+      {renderEntryHeader(name, subtitle || undefined, dateStr, loc || undefined, customize, techLine, undefined, linkHref || undefined)}
       {bullets}
     </div>
   );
@@ -813,17 +984,26 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   if ((data.website ?? "").trim()) contactItems.push({ icon: <IconGlobe />, label: prettyLabel(data.website.trim()), href: ensureHttp(data.website.trim()) });
   if ((data.github ?? "").trim()) contactItems.push({ icon: <IconGitHub />, label: prettyLabel(data.github!.trim()), href: ensureHttp(data.github!.trim()) });
 
+  const contentPadPx = mmToPx(customize.marginXmm);
+  const padYpx = mmToPx(customize.marginYmm);
+  const isBanner = customize.headerColorMode === "banner";
+  const bannerBg = resolveAccentHex(customize);
+
   const nameStyle: React.CSSProperties = {
     fontSize: baseFontPx + 16,
     fontWeight: 700,
     letterSpacing: "0.04em",
-    color: "#0f172a",
+    color: isBanner ? "#ffffff" : pickAccent(customize, "name", "#0f172a"),
   };
 
-  /** Tighter gap between contact icon and label */
-  const CONTACT_ICON_GAP = "2px";
+  /** Gap between icon and label (match project link row spacing) */
+  const CONTACT_ICON_GAP = "4px";
   const contactFontSize = Math.max(11, baseFontPx * 0.92);
-  const contactColor = "#1a1a1a";
+  const contactDefault = "#1a1a1a";
+  const contactColor = isBanner ? "#ffffff" : pickAccent(customize, "headerContactText", contactDefault);
+  const headerIconColor = isBanner
+    ? "#ffffff"
+    : pickAccent(customize, "headerIcons", contactColor);
 
   const renderContactChip = (
     item: (typeof contactItems)[number],
@@ -832,20 +1012,42 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   ) => (
     <span
       key={i}
+      className="max-w-full"
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: CONTACT_ICON_GAP,
+        lineHeight: 1.25,
         justifyContent: textAlign === "right" ? "flex-end" : textAlign === "center" ? "center" : "flex-start",
       }}
     >
-      {item.icon}
+      <span style={{ color: headerIconColor, display: "inline-flex", alignItems: "center", lineHeight: 1 }}>{item.icon}</span>
       {item.href ? (
-        <a href={item.href} style={{ color: contactColor, textDecoration: "none", textAlign }}>
+        <a
+          href={item.href}
+          style={{
+            color: contactColor,
+            textDecoration: "none",
+            textAlign,
+            lineHeight: 1.25,
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+        >
           {item.label}
         </a>
       ) : (
-        <span style={{ textAlign }}>{item.label}</span>
+        <span
+          style={{
+            color: contactColor,
+            textAlign,
+            lineHeight: 1.25,
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+        >
+          {item.label}
+        </span>
       )}
     </span>
   );
@@ -864,11 +1066,13 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
           gap: CONTACT_ICON_GAP,
           color: contactColor,
           fontSize: variant === "inlineRow" ? undefined : contactFontSize,
-          lineHeight: 1.35,
+          lineHeight: 1.25,
         }}
       >
-        <IconLocation />
-        <span>{locTrim}</span>
+        <span style={{ color: headerIconColor, display: "inline-flex", alignItems: "center" }}>
+          <IconLocation />
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 1.25 }}>{locTrim}</span>
       </span>
     );
     if (variant === "centeredBlock") {
@@ -898,37 +1102,62 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   ) : null;
 
   const headerNode = (() => {
+    const headlineColor = isBanner ? "rgba(255,255,255,0.95)" : "#334155";
     const headlineBlock = headlineTrim ? (
-      <div style={{ marginTop: "4px", fontSize: baseFontPx, color: "#334155", fontWeight: 600 }}>{headlineTrim}</div>
+      <div style={{ marginTop: "4px", fontSize: baseFontPx, color: headlineColor, fontWeight: 600 }}>{headlineTrim}</div>
     ) : null;
+
+    const wrapBanner = (node: React.ReactNode) => {
+      if (!isBanner) return node;
+      /** Bleed into the page’s top padding so the bar meets the top edge (no white strip above). */
+      return (
+        <div
+          style={{
+            background: bannerBg,
+            marginLeft: -contentPadPx,
+            marginRight: -contentPadPx,
+            marginTop: -padYpx,
+            paddingTop: padYpx + 14,
+            paddingBottom: 22,
+            paddingLeft: contentPadPx,
+            paddingRight: contentPadPx,
+            boxSizing: "border-box",
+          }}
+        >
+          {node}
+        </div>
+      );
+    };
 
     if (headerLayout === "splitRight") {
       return (
         <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
-            <div style={{ textAlign: "left", flex: "1 1 auto", minWidth: 0 }}>
-              <div style={nameStyle}>{nameTrim}</div>
-              {renderLocationWithIcon("leftBlock")}
-              {headlineBlock}
-            </div>
-            {contactItems.length > 0 ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-end",
-                  gap: "5px",
-                  flexShrink: 0,
-                  color: contactColor,
-                  fontSize: contactFontSize,
-                  lineHeight: 1.35,
-                  maxWidth: "52%",
-                }}
-              >
-                {contactItems.map((item, i) => renderContactChip(item, i, "right"))}
+          {wrapBanner(
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+              <div style={{ textAlign: "left", flex: "1 1 auto", minWidth: 0 }}>
+                <div style={nameStyle}>{nameTrim}</div>
+                {renderLocationWithIcon("leftBlock")}
+                {headlineBlock}
               </div>
-            ) : null}
-          </div>
+              {contactItems.length > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: "5px",
+                    flexShrink: 0,
+                    color: contactColor,
+                    fontSize: contactFontSize,
+                    lineHeight: 1.35,
+                    maxWidth: "52%",
+                  }}
+                >
+                  {contactItems.map((item, i) => renderContactChip(item, i, "right"))}
+                </div>
+              ) : null}
+            </div>
+          )}
           {summaryBlock}
         </div>
       );
@@ -937,26 +1166,30 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     if (headerLayout === "nameThenInline") {
       return (
         <div>
-          <div style={nameStyle}>{nameTrim}</div>
-          {headlineBlock}
-          {locTrim || contactItems.length > 0 ? (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: "10px",
-                rowGap: "6px",
-                marginTop: headlineTrim ? "6px" : "4px",
-                color: contactColor,
-                fontSize: contactFontSize,
-                lineHeight: 1.35,
-              }}
-            >
-              {renderLocationWithIcon("inlineRow")}
-              {contactItems.map((item, i) => renderContactChip(item, i, "left"))}
-            </div>
-          ) : null}
+          {wrapBanner(
+            <>
+              <div style={nameStyle}>{nameTrim}</div>
+              {headlineBlock}
+              {locTrim || contactItems.length > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: "10px",
+                    rowGap: "6px",
+                    marginTop: headlineTrim ? "6px" : "4px",
+                    color: contactColor,
+                    fontSize: contactFontSize,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {renderLocationWithIcon("inlineRow")}
+                  {contactItems.map((item, i) => renderContactChip(item, i, "left"))}
+                </div>
+              ) : null}
+            </>
+          )}
           {summaryBlock}
         </div>
       );
@@ -965,29 +1198,33 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     if (headerLayout === "centerRow2") {
       return (
         <div className="text-center">
-          <div style={nameStyle}>{nameTrim}</div>
-          {locTrim || contactItems.length > 0 ? (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: "10px",
-                rowGap: "6px",
-                marginTop: "6px",
-                color: contactColor,
-                fontSize: contactFontSize,
-                lineHeight: 1.35,
-              }}
-            >
-              {renderLocationWithIcon("inlineRow")}
-              {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
-            </div>
-          ) : null}
-          {headlineTrim ? (
-            <div style={{ marginTop: "6px", fontSize: baseFontPx, color: "#334155", fontWeight: 600 }}>{headlineTrim}</div>
-          ) : null}
+          {wrapBanner(
+            <>
+              <div style={nameStyle}>{nameTrim}</div>
+              {locTrim || contactItems.length > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "10px",
+                    rowGap: "6px",
+                    marginTop: "6px",
+                    color: contactColor,
+                    fontSize: contactFontSize,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {renderLocationWithIcon("inlineRow")}
+                  {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
+                </div>
+              ) : null}
+              {headlineTrim ? (
+                <div style={{ marginTop: "6px", fontSize: baseFontPx, color: headlineColor, fontWeight: 600 }}>{headlineTrim}</div>
+              ) : null}
+            </>
+          )}
           {summaryBlock}
         </div>
       );
@@ -996,26 +1233,30 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     // stackCenter — name, location, headline, then contacts each on their own visual rows (centered)
     return (
       <div className="text-center">
-        <div style={nameStyle}>{nameTrim}</div>
-        {renderLocationWithIcon("centeredBlock")}
-        {headlineBlock}
-        {contactItems.length > 0 ? (
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "10px",
-              marginTop: "6px",
-              color: contactColor,
-              fontSize: contactFontSize,
-              lineHeight: 1.35,
-            }}
-          >
-            {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
-          </div>
-        ) : null}
+        {wrapBanner(
+          <>
+            <div style={nameStyle}>{nameTrim}</div>
+            {renderLocationWithIcon("centeredBlock")}
+            {headlineBlock}
+            {contactItems.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "10px",
+                  marginTop: "6px",
+                  color: contactColor,
+                  fontSize: contactFontSize,
+                  lineHeight: 1.35,
+                }}
+              >
+                {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
+              </div>
+            ) : null}
+          </>
+        )}
         {summaryBlock}
       </div>
     );
@@ -1097,7 +1338,9 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
           key: `skill-${b.id}`,
           node: (
             <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-              <span className="font-semibold text-slate-900">{b.title}: </span>
+              <span className="font-semibold text-slate-900" style={{ color: pickAccent(customize, "dotsBarsBubbles", "#0f172a") }}>
+                {b.title}:{" "}
+              </span>
               {b.kind === "text" ? (
                 <span className="text-slate-900" dangerouslySetInnerHTML={{ __html: injectBulletStyles(b.text ?? "") }} />
               ) : (

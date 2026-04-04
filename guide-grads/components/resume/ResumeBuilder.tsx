@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
 import RichTextArea from "./RichTextArea";
 
@@ -38,6 +38,8 @@ export type Project = {
   start?: string;
   end?: string;
   location?: string;
+  /** Optional URL — external-link icon next to project name in preview when set */
+  link?: string;
   bulletsHtml: string;
 };
 
@@ -114,7 +116,31 @@ export type HeaderLayout =
   | "splitRight" /** Name & location left; contacts stacked right */
   | "nameThenInline"; /** Name on first line; location + contacts inline on second */
 
+/** Which resume elements use the chosen accent color (Customize → Colors). */
+export type AccentApply = {
+  name: boolean;
+  headings: boolean;
+  headingsLine: boolean;
+  headerIcons: boolean;
+  /** Location, email, phone, links text in the header contact row (not the icons). */
+  headerContactText: boolean;
+  dotsBarsBubbles: boolean;
+  dates: boolean;
+  /** Education / experience / projects / custom — bold primary line(s) per entry. */
+  entryTitle: boolean;
+  entrySubtitle: boolean;
+  linkIcons: boolean;
+};
+
+/** Colors panel: Basic = standard header; Banner = full-width accent bar with light text. */
+export type HeaderColorMode = "basic" | "banner";
+
 export type ResumeCustomize = {
+  /** Hex accent (e.g. #0f172a). Used where accent apply toggles are on. */
+  accentColor: string;
+  accentApply: AccentApply;
+  headerColorMode: HeaderColorMode;
+
   // spacing
   fontSizePt: number; // 8–12 typical
   lineHeight: number; // 1.1–2.0 (unitless CSS line-height)
@@ -168,7 +194,24 @@ const emptyResume: ResumeData = {
   custom: [],
 };
 
+const defaultAccentApply: AccentApply = {
+  name: true,
+  headings: true,
+  headingsLine: true,
+  headerIcons: false,
+  headerContactText: false,
+  dotsBarsBubbles: false,
+  dates: false,
+  entryTitle: false,
+  entrySubtitle: false,
+  linkIcons: false,
+};
+
 const defaultCustomize: ResumeCustomize = {
+  accentColor: "#0f172a",
+  accentApply: defaultAccentApply,
+  headerColorMode: "basic",
+
   fontSizePt: 9,
   lineHeight: 1.15,
   marginXmm: 12,
@@ -195,6 +238,71 @@ const defaultCustomize: ResumeCustomize = {
 
 const DEFAULT_SECTION_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
 
+/** Preset swatches for Customize → Colors (plus default / custom picker in UI). */
+const ACCENT_SWATCH_PRESETS = [
+  "#1e293b",
+  "#0f766e",
+  "#0d9488",
+  "#0891b2",
+  "#0369a1",
+  "#1d4ed8",
+  "#1e3a8a",
+  "#4c1d95",
+  "#7f1d1d",
+  "#be185d",
+  "#c026d3",
+  "#ea580c",
+] as const;
+
+/** Basic + Banner only (single row). */
+const HEADER_COLOR_MODE_ROW: HeaderColorMode[] = ["basic", "banner"];
+
+type AccentApplyCell = { key: keyof AccentApply; label: string };
+
+/**
+ * Five balanced rows (no empty cells). Dates sits with Contact info on the last row so there is no
+ * “hole” on the right under Dots/Bars/Bubbles (a lone Dates row used to push Entry title down).
+ */
+const ACCENT_APPLY_GRID: AccentApplyCell[][] = [
+  [
+    { key: "name", label: "Name" },
+    { key: "dotsBarsBubbles", label: "Dots/Bars/Bubbles" },
+  ],
+  [
+    { key: "headings", label: "Headings" },
+    { key: "entryTitle", label: "Entry title" },
+  ],
+  [
+    { key: "headingsLine", label: "Headings Line" },
+    { key: "entrySubtitle", label: "Entry subtitle" },
+  ],
+  [
+    { key: "headerIcons", label: "Header icons" },
+    { key: "linkIcons", label: "Link icons" },
+  ],
+  [
+    { key: "dates", label: "Dates" },
+    { key: "headerContactText", label: "Contact info" },
+  ],
+];
+
+const HEADER_MODE_LABELS: Record<HeaderColorMode, string> = {
+  basic: "Basic",
+  banner: "Banner",
+};
+
+function ColorModeIcon({ mode }: { mode: HeaderColorMode }) {
+  if (mode === "basic") {
+    return <div className="h-9 w-9 rounded-full border border-white/35 bg-white/70" />;
+  }
+  return (
+    <div className="flex h-9 w-9 flex-col justify-center gap-1 rounded border border-white/25 bg-white/10 px-1.5 py-1.5">
+      <div className="h-2.5 w-full rounded-sm bg-teal-500/95" />
+      <div className="mx-auto h-1 w-[75%] rounded-sm bg-white/45" />
+    </div>
+  );
+}
+
 /** ---------------- Helpers ---------------- */
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -212,6 +320,37 @@ function splitCommaList(s: string) {
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+}
+
+/** List skills: keep raw text while typing; parse on blur so commas/spaces aren’t stripped each keystroke. */
+function SkillItemsField({
+  serializedItems,
+  onCommit,
+  placeholder,
+  className,
+}: {
+  serializedItems: string;
+  onCommit: (items: string[]) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(serializedItems);
+  useEffect(() => {
+    setDraft(serializedItems);
+  }, [serializedItems]);
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(splitCommaList(draft))}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
 }
 
 function hasText(v?: string) {
@@ -558,6 +697,14 @@ export default function ResumeBuilder() {
         if (parsed?.data) setData({ ...emptyResume, ...parsed.data });
         if (parsed?.customize) {
           const merged = { ...defaultCustomize, ...parsed.customize };
+          merged.accentApply = { ...defaultAccentApply, ...parsed.customize?.accentApply };
+          merged.accentColor =
+            typeof merged.accentColor === "string" && merged.accentColor.trim()
+              ? merged.accentColor.trim()
+              : defaultCustomize.accentColor;
+          const hm = merged.headerColorMode as string;
+          merged.headerColorMode =
+            hm === "banner" || hm === "advanced" ? "banner" : "basic";
           const el = merged.entryLayout as string;
           merged.entryLayout =
             el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
@@ -892,7 +1039,7 @@ export default function ResumeBuilder() {
     const id = uid();
     setData((p) => ({
       ...p,
-      projects: [...p.projects, { id, name: "", subtitle: "", stack: "", start: "", end: "", location: "", bulletsHtml: "" }],
+      projects: [...p.projects, { id, name: "", subtitle: "", stack: "", start: "", end: "", location: "", link: "", bulletsHtml: "" }],
     }));
     setOpenProjId(id);
   }
@@ -977,6 +1124,11 @@ export default function ResumeBuilder() {
   const fontList =
     customize.fontKind === "serif" ? fontSerif : customize.fontKind === "mono" ? fontMono : fontSans;
 
+  const accentApplyResolved = useMemo(
+    () => ({ ...defaultAccentApply, ...customize.accentApply }),
+    [customize.accentApply]
+  );
+
   function setCustomizePatch(patch: Partial<ResumeCustomize>) {
     setCustomize((prev) => ({ ...prev, ...patch }));
   }
@@ -997,6 +1149,7 @@ export default function ResumeBuilder() {
         {openBasics ? (
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <TextInput label="Full name" value={data.name} onChange={(v) => setBasics("name", v)} />
+            <TextInput label="Job title" value={data.headline} onChange={(v) => setBasics("headline", v)} placeholder="e.g. Software Engineer" />
             <TextInput label="Location" value={data.location} onChange={(v) => setBasics("location", v)} />
             <TextInput label="Email" value={data.email} onChange={(v) => setBasics("email", v)} />
             <TextInput label="Phone" value={data.phone} onChange={(v) => setBasics("phone", v)} />
@@ -1064,7 +1217,13 @@ export default function ResumeBuilder() {
                         {b.kind === "list" ? (
                           <div className="space-y-2">
                             <div className="text-xs text-white/70">Items</div>
-                            <input value={(b.items ?? []).join(", ")} onChange={(e) => updateSkillBlock(b.id, { items: splitCommaList(e.target.value) })} placeholder="Comma separated" className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" />
+                            <SkillItemsField
+                              key={b.id}
+                              serializedItems={(b.items ?? []).join(", ")}
+                              onCommit={(items) => updateSkillBlock(b.id, { items })}
+                              placeholder="Comma separated"
+                              className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+                            />
                           </div>
                         ) : (
                           <RichTextArea label="Text" value={b.text ?? ""} onChange={(v) => updateSkillBlock(b.id, { text: v })} placeholder="Write a single line or paragraph" />
@@ -1255,6 +1414,7 @@ export default function ResumeBuilder() {
                         <TextInput label="Start (optional)" value={p.start ?? ""} onChange={(v) => updateProject(p.id, { start: v })} />
                         <TextInput label="End (optional)" value={p.end ?? ""} onChange={(v) => updateProject(p.id, { end: v })} />
                         <TextInput label="Location (optional)" value={p.location ?? ""} onChange={(v) => updateProject(p.id, { location: v })} />
+                        <TextInput label="Link (optional)" value={p.link ?? ""} onChange={(v) => updateProject(p.id, { link: v })} placeholder="https://…" />
                         <div className="sm:col-span-2">
                           <RichTextArea label="Bullets" value={p.bulletsHtml ?? ""} onChange={(v) => updateProject(p.id, { bulletsHtml: v })} placeholder="Add bullet points..." />
                         </div>
@@ -1488,7 +1648,7 @@ export default function ResumeBuilder() {
 
                 <button
                   onClick={() => setAddModalOpen(true)}
-                  className="mt-2 w-full rounded-2xl bg-gradient-to-r from-pink-600 to-rose-400 py-4 text-lg font-semibold text-white shadow-xl hover:opacity-95"
+                  className="mt-2 w-full rounded-2xl bg-teal-500 py-4 text-lg font-semibold text-white shadow-xl hover:bg-teal-400"
                   type="button"
                 >
                   + Add Content
@@ -1953,6 +2113,112 @@ export default function ResumeBuilder() {
                         </button>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Colors — accent swatches + where it applies (Link icons last) */}
+                <div className="rounded-3xl bg-white/5 p-5">
+                  <div className="text-3xl font-extrabold">Colors</div>
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    {HEADER_COLOR_MODE_ROW.map((mode) => {
+                      const active = customize.headerColorMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={active}
+                          aria-label={HEADER_MODE_LABELS[mode]}
+                          onClick={() => setCustomizePatch({ headerColorMode: mode })}
+                          className={[
+                            "flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl border p-2 transition-colors",
+                            active ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          <ColorModeIcon mode={mode} />
+                          <span className="text-center text-[10px] font-medium leading-tight text-white/70">
+                            {HEADER_MODE_LABELS[mode]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      title="Default"
+                      aria-label="Default accent color"
+                      onClick={() => setCustomizePatch({ accentColor: defaultCustomize.accentColor })}
+                      className={[
+                        "relative h-9 w-9 shrink-0 rounded-full border-2 transition-colors",
+                        customize.accentColor === defaultCustomize.accentColor ? "border-teal-400" : "border-white/25 bg-white",
+                      ].join(" ")}
+                    >
+                      <span className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
+                        <span className="h-px w-[120%] rotate-45 bg-slate-400" />
+                      </span>
+                    </button>
+                    {ACCENT_SWATCH_PRESETS.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        title={hex}
+                        aria-label={`Accent ${hex}`}
+                        onClick={() => setCustomizePatch({ accentColor: hex })}
+                        style={{ backgroundColor: hex }}
+                        className={[
+                          "h-9 w-9 shrink-0 rounded-full border-2 transition-colors",
+                          customize.accentColor.toLowerCase() === hex.toLowerCase() ? "border-teal-400" : "border-white/20",
+                        ].join(" ")}
+                      />
+                    ))}
+                    <label
+                      className="relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border-2 border-white/20 bg-gradient-to-br from-red-500 via-yellow-400 to-blue-600 hover:border-white/40"
+                      title="Custom color"
+                    >
+                      <span className="sr-only">Custom accent color</span>
+                      <input
+                        type="color"
+                        value={customize.accentColor.match(/^#[0-9A-Fa-f]{6}$/) ? customize.accentColor : defaultCustomize.accentColor}
+                        onChange={(e) => setCustomizePatch({ accentColor: e.target.value })}
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-6 text-sm font-semibold text-white/80">Apply accent color</div>
+                  <div className="mt-3 flex flex-col gap-2.5">
+                    {ACCENT_APPLY_GRID.map((row, ri) => (
+                      <div
+                        key={ri}
+                        className="grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2 sm:items-start"
+                      >
+                        {row.map((cell) => {
+                          const c = cell;
+                          return (
+                            <label
+                              key={c.key}
+                              className="flex cursor-pointer items-center gap-2.5 text-sm text-white/85"
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 shrink-0 rounded border-white/30 bg-[#0b223a]"
+                                checked={accentApplyResolved[c.key]}
+                                onChange={(e) =>
+                                  setCustomizePatch({
+                                    accentApply: {
+                                      ...defaultAccentApply,
+                                      ...customize.accentApply,
+                                      [c.key]: e.target.checked,
+                                    },
+                                  })
+                                }
+                              />
+                              {c.label}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
