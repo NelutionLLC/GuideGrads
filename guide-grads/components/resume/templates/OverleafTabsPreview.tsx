@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { ResumeCustomize, ResumeData } from "../ResumeBuilder";
+import type { EntryLayout, HeaderLayout, ResumeCustomize, ResumeData } from "../ResumeBuilder";
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
 const mmToPx = (mm: number) => (mm * 96) / 25.4;
@@ -38,7 +38,48 @@ function hasAny(list?: string[]) {
   return (list ?? []).some((x) => (x ?? "").trim().length > 0);
 }
 
+function normalizeHeaderLayout(h: string | undefined): HeaderLayout {
+  if (h === "stackCenter" || h === "centerRow2" || h === "splitRight" || h === "nameThenInline") return h;
+  if (h === "split") return "splitRight";
+  if (h === "centered") return "stackCenter";
+  return "stackCenter";
+}
+
 type Block = { key: string; node: React.ReactNode };
+
+/** Space between entry header row and bullets (work, projects, custom) — tighter than former mt-1. */
+const ENTRY_BODY_TOP_GAP_PX = 2;
+/** Date/location column — compact line-height so a tall right column doesn’t inflate the row above bullets. */
+const ENTRY_META_LINE_HEIGHT = 1.12;
+/** Pulls the bullet block slightly closer to the title/meta row (same for all entry types). */
+const ENTRY_HEADER_ROW_TUCK_PX = 2;
+
+/**
+ * Customize stores a section margin *level* 1–20; preview maps to real px (1→5, 2→6, … 20→24).
+ */
+function sectionMarginLevelToPx(level: number): number {
+  return level + 4;
+}
+
+/**
+ * Section headings use section margin; entries use entity margin only when the previous block is not a section title
+ * (so no extra gap below the rule/dash before the first entry in a section).
+ */
+function marginTopBeforeBlock(
+  blockKey: string,
+  prevBlockKey: string | undefined,
+  sectionMarginLevel: number,
+  entityGapPx: number
+): number {
+  if (!prevBlockKey) return 0;
+  if (blockKey.endsWith("-title")) {
+    return sectionMarginLevelToPx(sectionMarginLevel);
+  }
+  if (prevBlockKey.endsWith("-title")) {
+    return 0;
+  }
+  return entityGapPx;
+}
 
 function IconPhone() {
   return (
@@ -76,6 +117,14 @@ function IconGitHub() {
   );
 }
 
+function IconLocation() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ display: "inline", verticalAlign: "middle", flexShrink: 0 }}>
+      <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z" />
+    </svg>
+  );
+}
+
 function prettyLabel(url: string) {
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
@@ -91,6 +140,10 @@ function SectionHeading({
   title: string;
   customize: ResumeCustomize;
 }) {
+  /** Inter-section gap comes from block marginTop (section margin). */
+  const padTop = 0;
+  const padBottom = 2;
+
   const txt =
     customize.headingCaps === "uppercase" ? title.toUpperCase() : title;
 
@@ -113,7 +166,7 @@ function SectionHeading({
 
   if (style === "boxed") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={{ ...sizeStyle, background: "#e2e8f0", width: "100%", padding: "4px 8px", textAlign: "center", boxSizing: "border-box" }}>{txt}</div>
       </div>
     );
@@ -121,7 +174,7 @@ function SectionHeading({
 
   if (style === "underline") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={{ ...sizeStyle, borderBottom: `${lineThickness} solid ${lineColor}`, paddingBottom: "4px", display: "inline-block" }}>{txt}</div>
       </div>
     );
@@ -129,7 +182,7 @@ function SectionHeading({
 
   if (style === "split") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
         <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
         <div style={lineStyle} />
       </div>
@@ -138,7 +191,7 @@ function SectionHeading({
 
   if (style === "plain") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={sizeStyle}>{txt}</div>
       </div>
     );
@@ -146,7 +199,7 @@ function SectionHeading({
 
   if (style === "double") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1 }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={lineStyle} />
         <div style={{ ...sizeStyle, marginTop: "5px", marginBottom: "5px" }}>{txt}</div>
         <div style={lineStyle} />
@@ -156,7 +209,7 @@ function SectionHeading({
 
   if (style === "leftbar") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "stretch", gap: "8px" }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "stretch", gap: "8px" }}>
         <div style={{ width: lineThickness === "1px" ? "3px" : lineThickness === "1.5px" ? "4px" : "5px", background: lineColor, borderRadius: "2px", flexShrink: 0 }} />
         <div style={sizeStyle}>{txt}</div>
       </div>
@@ -165,7 +218,7 @@ function SectionHeading({
 
   if (style === "centered") {
     return (
-      <div style={{ paddingTop: "20px", paddingBottom: "8px", lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
         <div style={lineStyle} />
         <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
         <div style={lineStyle} />
@@ -175,26 +228,129 @@ function SectionHeading({
 
   // default: "rule"
   return (
-    <div style={{ paddingTop: "20px", lineHeight: 1 }}>
+    <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
       <div style={sizeStyle}>{txt}</div>
-      <div style={{ marginTop: "5px", marginBottom: "8px", ...lineStyle }} />
+      <div style={{ marginTop: "2px", marginBottom: "3px", ...lineStyle }} />
     </div>
   );
 }
 
 const PREVIEW_DEFAULT_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
 
+function normalizeEntryLayout(raw: string | undefined): EntryLayout {
+  if (raw === "l1" || raw === "l2" || raw === "l3" || raw === "l4" || raw === "l5") return raw;
+  return "l1";
+}
+
+function getListingOrders(customize: ResumeCustomize) {
+  const titleFirst = (customize.entryListingTitleOrder ?? "titleFirst") !== "subtitleFirst";
+  const metaDateFirst = (customize.entryListingMetaOrder ?? "dateFirst") !== "locationFirst";
+  return { titleFirst, metaDateFirst };
+}
+
+/** Education GPA on preview — always `GPA: value`; strips a duplicate leading "GPA:" from input */
+function formatGpaForPreview(gpa: string | undefined): string {
+  const t = (gpa ?? "").trim();
+  if (!t) return "";
+  const cleaned = t.replace(/^\s*gpa\s*:?\s*/i, "").trim();
+  return cleaned ? `GPA: ${cleaned}` : "";
+}
+
+/**
+ * Single-line meta (layout 1 & fallback). With GPA (education): `Date | Location | GPA` or `Location | Date | GPA`.
+ * Without GPA: `Date | Location` or `Location | Date`.
+ */
+function buildMetaSameLine(
+  dateStr: string,
+  location: string | undefined,
+  metaDateFirst: boolean,
+  gpa?: string
+): string {
+  const d = (dateStr ?? "").trim();
+  const l = (location ?? "").trim();
+  const g = formatGpaForPreview(gpa);
+  if (g) {
+    return metaDateFirst ? [d, l, g].filter(Boolean).join(" | ") : [l, d, g].filter(Boolean).join(" | ");
+  }
+  const ordered = metaDateFirst ? [d, l] : [l, d];
+  return ordered.filter(Boolean).join(" | ");
+}
+
+/** Education layouts 2–4: line1 = first listing field; line2 = second field | GPA */
+function educationMetaTwoLines(
+  dateStr: string,
+  location: string | undefined,
+  gpaDisplay: string,
+  metaDateFirst: boolean,
+  align: "left" | "right"
+): React.ReactNode {
+  const d = (dateStr ?? "").trim();
+  const l = (location ?? "").trim();
+  const g = gpaDisplay;
+  const ta = align === "right" ? "right" : "left";
+  const lineStyle: React.CSSProperties = { textAlign: ta, lineHeight: ENTRY_META_LINE_HEIGHT };
+  if (metaDateFirst) {
+    return (
+      <>
+        {d ? <div style={lineStyle}>{d}</div> : null}
+        {(l || g) ? <div style={lineStyle}>{[l, g].filter(Boolean).join(" | ")}</div> : null}
+      </>
+    );
+  }
+  return (
+    <>
+      {l ? <div style={lineStyle}>{l}</div> : null}
+      {(d || g) ? <div style={lineStyle}>{[d, g].filter(Boolean).join(" | ")}</div> : null}
+    </>
+  );
+}
+
+/** Matches l4/l5 first column width + gap so bullets/coursework align with title text */
+const ENTRY_META_COL = "clamp(96px, 20%, 150px)";
+const ENTRY_COL_GAP_L4 = "24px";
+const ENTRY_COL_GAP_L5 = "22px";
+
+function getEntryBodyIndentStyle(customize: ResumeCustomize, hasLeftMetaColumn: boolean): React.CSSProperties {
+  const L = normalizeEntryLayout(customize.entryLayout);
+  if (L === "l5" && hasLeftMetaColumn) {
+    return {
+      marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L5})`,
+      paddingLeft: "0.6em",
+    };
+  }
+  if (L === "l4" && hasLeftMetaColumn) {
+    return {
+      marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L4})`,
+      paddingLeft: "0.6em",
+    };
+  }
+  return { paddingLeft: "0.6em" };
+}
+
+function getCourseworkIndentStyle(customize: ResumeCustomize, hasLeftMetaColumn: boolean): React.CSSProperties {
+  const L = normalizeEntryLayout(customize.entryLayout);
+  if (L === "l5" && hasLeftMetaColumn) {
+    return { marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L5})` };
+  }
+  if (L === "l4" && hasLeftMetaColumn) {
+    return { marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L4})` };
+  }
+  return {};
+}
+
 function renderEntryHeader(
   title: string,
   subtitle: string | undefined,
   dateStr: string,
   location: string | undefined,
-  customize: ResumeCustomize
+  customize: ResumeCustomize,
+  /** When set (including ""), subtitle is user subtitle only; tech stays on the same line as the title */
+  projectInlineTech?: string,
+  /** Education: appended last on meta lines after date | location */
+  endMetaGpa?: string
 ): React.ReactNode {
-  const layout = customize.entryLayout ?? "standard";
+  const layout = normalizeEntryLayout(customize.entryLayout);
   const subStyle = customize.entrySubtitleStyle ?? "italic";
-  const subPlacement = customize.entrySubtitlePlacement ?? "next-line";
-  const datePlacement = customize.entryDatePlacement ?? "next-line";
 
   const subCss: React.CSSProperties = {
     fontStyle: subStyle === "italic" ? "italic" : "normal",
@@ -202,117 +358,446 @@ function renderEntryHeader(
     color: subStyle === "bold" ? "#1e293b" : "#475569",
   };
 
+  const projectMode = projectInlineTech !== undefined;
+  const techDisplay = projectMode ? (projectInlineTech ?? "").trim() : "";
+
   const hasSub = !!subtitle?.trim();
   const hasDate = !!dateStr?.trim();
   const hasLoc = !!location?.trim();
+  const gpaDisplay = formatGpaForPreview(endMetaGpa);
+  const hasGpa = !!gpaDisplay;
 
-  // Layout 2: date/location stacked on left column, title/subtitle stacked on right
-  if (layout === "meta-left") {
-    return (
-      <div style={{ display: "flex", gap: "12px" }}>
-        <div style={{ minWidth: "90px", flexShrink: 0, color: "#334155" }}>
-          {hasDate && <div>{dateStr}</div>}
-          {hasLoc && <div>{location}</div>}
-        </div>
-        <div style={{ flex: 1 }}>
-          <div className="font-semibold text-slate-900">{title}</div>
-          {hasSub && <div style={subCss}>{subtitle}</div>}
-        </div>
+  const { titleFirst, metaDateFirst } = getListingOrders(customize);
+
+  /** No date: same idea as projects — ignore l3–l5; only l1 (default) or l2; location stays on the first row */
+  const layoutForRender: EntryLayout =
+    !hasDate && !projectMode ? (layout === "l2" ? "l2" : "l1") : layout;
+
+  const metaSameLine = buildMetaSameLine(dateStr, location, metaDateFirst, endMetaGpa);
+
+  /** First in order = bold (title role); second = subtitle style */
+  const titleCommaSubtitle = titleFirst ? (
+    <span style={{ overflowWrap: "anywhere" as const }}>
+      <span className="font-semibold text-slate-900">{title}</span>
+      {hasSub && (
+        <>
+          <span className="text-slate-900">, </span>
+          <span style={subCss}>{subtitle}</span>
+        </>
+      )}
+    </span>
+  ) : (
+    <span style={{ overflowWrap: "anywhere" as const }}>
+      {hasSub ? (
+        <>
+          <span className="font-semibold text-slate-900">{subtitle}</span>
+          <span className="text-slate-900">, </span>
+          <span style={subCss}>{title}</span>
+        </>
+      ) : (
+        <span className="font-semibold text-slate-900">{title}</span>
+      )}
+    </span>
+  );
+
+  /** Projects: name | tech — strong row (title role) vs soft row (subtitle role) */
+  const projectTitleTechLineStrong = (
+    <span style={{ overflowWrap: "anywhere" as const }}>
+      <span className="font-semibold text-slate-900">{title}</span>
+      {techDisplay ? (
+        <>
+          <span className="text-slate-900"> | </span>
+          <span style={subCss}>{techDisplay}</span>
+        </>
+      ) : null}
+    </span>
+  );
+  const projectTitleTechLineSoft = (
+    <span style={{ overflowWrap: "anywhere" as const }}>
+      <span style={subCss}>{title}</span>
+      {techDisplay ? (
+        <>
+          <span className="text-slate-900"> | </span>
+          <span style={subCss}>{techDisplay}</span>
+        </>
+      ) : null}
+    </span>
+  );
+
+  const projectTitleBody = titleFirst ? (
+    <>
+      <div>{projectTitleTechLineStrong}</div>
+      {hasSub && <div style={subCss}>{subtitle}</div>}
+    </>
+  ) : (
+    <>
+      {hasSub && <div className="font-semibold text-slate-900">{subtitle}</div>}
+      <div>{hasSub ? projectTitleTechLineSoft : projectTitleTechLineStrong}</div>
+    </>
+  );
+  const projectLeftStack = <div style={{ minWidth: 0 }}>{projectTitleBody}</div>;
+
+  /** l4 left meta: education + GPA → two lines (same pattern as l2/l3 right); else one line */
+  const leftMetaStack =
+    hasDate || hasLoc || hasGpa ? (
+      <div
+        style={{
+          flexShrink: 0,
+          width: ENTRY_META_COL,
+          boxSizing: "border-box",
+          color: "#334155",
+          lineHeight: ENTRY_META_LINE_HEIGHT,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: "1px",
+        }}
+      >
+        {hasGpa ? (
+          educationMetaTwoLines(dateStr, location, gpaDisplay, metaDateFirst, "left")
+        ) : (
+          <div>{metaSameLine}</div>
+        )}
       </div>
-    );
-  }
+    ) : null;
 
-  // Layout 3: date | title | location in one row, subtitle below title
-  if (layout === "compact") {
+  // Layout 1: "Title, Subtitle" left | "Date | Location | GPA" right (one row)
+  if (layoutForRender === "l1") {
     return (
-      <div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
-          {hasDate && <div style={{ minWidth: "90px", flexShrink: 0, color: "#334155" }}>{dateStr}</div>}
-          <div style={{ flex: 1 }} className="font-semibold text-slate-900">{title}</div>
-          {hasLoc && <div style={{ flexShrink: 0, color: "#334155" }}>{location}</div>}
-        </div>
-        {hasSub && (
-          <div style={{ display: "flex", gap: "8px" }}>
-            {hasDate && <div style={{ minWidth: "90px", flexShrink: 0 }} />}
-            <div style={subCss}>{subtitle}</div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "12px",
+          alignItems: "flex-start",
+          marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+        }}
+      >
+        {projectMode ? projectLeftStack : <div style={{ minWidth: 0 }}>{titleCommaSubtitle}</div>}
+        {(hasDate || hasLoc || hasGpa) && (
+          <div
+            style={{
+              flexShrink: 0,
+              color: "#334155",
+              textAlign: "right",
+              maxWidth: "50%",
+              lineHeight: ENTRY_META_LINE_HEIGHT,
+            }}
+          >
+            {metaSameLine}
           </div>
         )}
       </div>
     );
   }
 
-  // Layout 4: title left / date·location combined right, subtitle below title
-  if (layout === "stacked") {
+  /** l2 / l3 right meta: education + GPA → two lines; else one line */
+  const rightMetaColumn =
+    hasDate || hasLoc || hasGpa ? (
+      <div
+        style={{
+          flexShrink: 0,
+          color: "#334155",
+          lineHeight: ENTRY_META_LINE_HEIGHT,
+          maxWidth: "50%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: "1px",
+        }}
+      >
+        {hasGpa ? (
+          educationMetaTwoLines(dateStr, location, gpaDisplay, metaDateFirst, "right")
+        ) : (
+          <div style={{ textAlign: "right" }}>{metaSameLine}</div>
+        )}
+      </div>
+    ) : null;
+
+  // Layout 2: title on one line, subtitle next line — date & location stacked on the right
+  if (layoutForRender === "l2") {
     return (
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-          <div className="font-semibold text-slate-900">{title}</div>
-          {(hasDate || hasLoc) && (
-            <div style={{ flexShrink: 0, color: "#334155" }}>
-              {[dateStr, location].filter(Boolean).join(" | ")}
-            </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "12px",
+          alignItems: "flex-start",
+          marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+        }}
+      >
+        {projectMode ? (
+          projectLeftStack
+        ) : (
+          <div style={{ minWidth: 0 }}>
+            {titleFirst ? (
+              <>
+                <div className="font-semibold text-slate-900">{title}</div>
+                {hasSub && <div style={subCss}>{subtitle}</div>}
+              </>
+            ) : hasSub ? (
+              <>
+                <div className="font-semibold text-slate-900">{subtitle}</div>
+                <div style={subCss}>{title}</div>
+              </>
+            ) : (
+              <div className="font-semibold text-slate-900">{title}</div>
+            )}
+          </div>
+        )}
+        {rightMetaColumn}
+      </div>
+    );
+  }
+
+  // Layout 3: "Title, Subtitle" one line — date & location on separate lines, right-aligned
+  if (layoutForRender === "l3") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "12px",
+          alignItems: "flex-start",
+          marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+        }}
+      >
+        {projectMode ? projectLeftStack : <div style={{ minWidth: 0 }}>{titleCommaSubtitle}</div>}
+        {rightMetaColumn}
+      </div>
+    );
+  }
+
+  // Layout 4: Date & Location stacked left — Title and Subtitle on separate lines on the right
+  if (layoutForRender === "l4") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          gap: ENTRY_COL_GAP_L4,
+          alignItems: "flex-start",
+          marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+        }}
+      >
+        {leftMetaStack}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {projectMode ? (
+            projectTitleBody
+          ) : titleFirst ? (
+            <>
+              <div className="font-semibold text-slate-900">{title}</div>
+              {hasSub && <div style={subCss}>{subtitle}</div>}
+            </>
+          ) : hasSub ? (
+            <>
+              <div className="font-semibold text-slate-900">{subtitle}</div>
+              <div style={subCss}>{title}</div>
+            </>
+          ) : (
+            <div className="font-semibold text-slate-900">{title}</div>
           )}
         </div>
-        {hasSub && <div style={subCss}>{subtitle}</div>}
       </div>
     );
   }
 
-  // Layout 1 (standard): respects subPlacement + datePlacement
-  // subPlacement=same-line → subtitle inline after title
-  // datePlacement=next-line → date+location on their own row below
-  if (datePlacement === "next-line") {
+  // Layout 5 (education + GPA): left = Date or Location (listing order); right = other field, then GPA (stacked)
+  if (layoutForRender === "l5") {
+    let l5Col1: string | null = null;
+    let l5Col3: string | null = null;
+
+    if (hasGpa) {
+      if (metaDateFirst) {
+        l5Col1 = (dateStr ?? "").trim() || null;
+      } else {
+        l5Col1 = (location ?? "").trim() || null;
+      }
+    } else if (hasDate && hasLoc) {
+      if (metaDateFirst) {
+        l5Col1 = dateStr;
+        l5Col3 = location ?? null;
+      } else {
+        l5Col1 = location ?? null;
+        l5Col3 = dateStr;
+      }
+    } else if (hasDate) {
+      l5Col1 = dateStr;
+    } else if (hasLoc) {
+      l5Col3 = location ?? null;
+    }
+
     return (
-      <div>
-        {subPlacement === "same-line" ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "baseline" }}>
-            <span className="font-semibold text-slate-900">{title}</span>
-            {hasSub && <span style={subCss}>{subtitle}</span>}
-          </div>
-        ) : (
-          <>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `${ENTRY_META_COL} minmax(0, 1fr) minmax(88px, 28%)`,
+          columnGap: ENTRY_COL_GAP_L5,
+          rowGap: "2px",
+          alignItems: "start",
+          marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+        }}
+      >
+        <div style={{ color: "#334155", textAlign: "left" }}>{l5Col1}</div>
+        <div style={{ minWidth: 0 }}>
+          {projectMode ? projectTitleBody : titleFirst ? (
+            <>
+              <div className="font-semibold text-slate-900">{title}</div>
+              {hasSub && <div style={subCss}>{subtitle}</div>}
+            </>
+          ) : hasSub ? (
+            <>
+              <div className="font-semibold text-slate-900">{subtitle}</div>
+              <div style={subCss}>{title}</div>
+            </>
+          ) : (
             <div className="font-semibold text-slate-900">{title}</div>
-            {hasSub && <div style={subCss}>{subtitle}</div>}
-          </>
-        )}
-        {(hasDate || hasLoc) && (
-          <div style={{ color: "#334155" }}>{[dateStr, location].filter(Boolean).join(" · ")}</div>
-        )}
-      </div>
-    );
-  }
-
-  // standard + datePlacement=same-line
-  if (subPlacement === "same-line") {
-    return (
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "baseline" }}>
-          <span className="font-semibold text-slate-900">{title}</span>
-          {hasSub && <span style={subCss}>{subtitle}</span>}
+          )}
         </div>
-        {(hasDate || hasLoc) && (
-          <div style={{ flexShrink: 0, color: "#334155", textAlign: "right" }}>
-            {hasDate && <div>{dateStr}</div>}
-            {hasLoc && <div>{location}</div>}
-          </div>
-        )}
+        <div style={{ color: "#334155", textAlign: "right", lineHeight: ENTRY_META_LINE_HEIGHT }}>
+          {hasGpa ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1px", lineHeight: ENTRY_META_LINE_HEIGHT }}>
+              {metaDateFirst ? (
+                <>
+                  {(location ?? "").trim() ? <div>{(location ?? "").trim()}</div> : null}
+                  {gpaDisplay ? <div>{gpaDisplay}</div> : null}
+                </>
+              ) : (
+                <>
+                  {(dateStr ?? "").trim() ? <div>{(dateStr ?? "").trim()}</div> : null}
+                  {gpaDisplay ? <div>{gpaDisplay}</div> : null}
+                </>
+              )}
+            </div>
+          ) : (
+            l5Col3
+          )}
+        </div>
       </div>
     );
   }
 
-  // standard + subPlacement=next-line + datePlacement=same-line (classic two-column)
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-        <div className="font-semibold text-slate-900">{title}</div>
-        {hasDate && <div style={{ flexShrink: 0, color: "#334155" }}>{dateStr}</div>}
-      </div>
-      {(hasSub || hasLoc) && (
-        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-          {hasSub ? <div style={subCss}>{subtitle}</div> : <div />}
-          {hasLoc && <div style={{ flexShrink: 0, color: "#334155" }}>{location}</div>}
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: "12px",
+        alignItems: "flex-start",
+        marginBottom: -ENTRY_HEADER_ROW_TUCK_PX,
+      }}
+    >
+      {projectMode ? projectLeftStack : <div style={{ minWidth: 0 }}>{titleCommaSubtitle}</div>}
+      {(hasDate || hasLoc || hasGpa) && (
+        <div
+          style={{
+            flexShrink: 0,
+            color: "#334155",
+            textAlign: "right",
+            maxWidth: "50%",
+            lineHeight: ENTRY_META_LINE_HEIGHT,
+          }}
+        >
+          {metaSameLine}
         </div>
       )}
+    </div>
+  );
+}
+
+function projectSubtitleCss(customize: ResumeCustomize): React.CSSProperties {
+  const subStyle = customize.entrySubtitleStyle ?? "italic";
+  return {
+    fontStyle: subStyle === "italic" ? "italic" : "normal",
+    fontWeight: subStyle === "bold" ? 700 : 400,
+    color: subStyle === "bold" ? "#1e293b" : "#475569",
+  };
+}
+
+/** Tech stack: split on commas or pipes, normalize to comma-separated for display */
+function formatTechStackForDisplay(stack: string): string {
+  return stack
+    .split(/[,|]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** Projects: classic one-line preview when no date range; entry layouts when start/end are set */
+function renderProjectBlock(p: ResumeData["projects"][number], customize: ResumeCustomize): React.ReactNode {
+  const dateStr = formatRange(p.start, p.end);
+  const hasDate = !!dateStr.trim();
+  const name = (p.name ?? "").trim();
+  const stackRaw = (p.stack ?? "").trim();
+  const subtitle = (p.subtitle ?? "").trim();
+  const loc = (p.location ?? "").trim();
+  const techLine = formatTechStackForDisplay(stackRaw);
+
+  const bullets =
+    p.bulletsHtml?.trim() ? (
+      <div
+        className="text-slate-800"
+        style={{
+          marginTop: ENTRY_BODY_TOP_GAP_PX,
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
+          ...(hasDate
+            ? getEntryBodyIndentStyle(customize, !!dateStr.trim())
+            : { paddingLeft: "0.6em" }),
+        }}
+        dangerouslySetInnerHTML={{ __html: injectBulletStyles(p.bulletsHtml.trim()) }}
+      />
+    ) : null;
+
+  if (!hasDate) {
+    const { titleFirst } = getListingOrders(customize);
+    const subCssProps = projectSubtitleCss(customize);
+    const nameLineStrong = (
+      <div className="text-slate-900">
+        <span className="font-semibold text-slate-900">{name || "Project"}</span>
+        {techLine ? (
+          <>
+            <span> | </span>
+            <span style={subCssProps}>{techLine}</span>
+          </>
+        ) : null}
+      </div>
+    );
+    const nameLineSoft = (
+      <div className="text-slate-900">
+        <span style={subCssProps}>{name || "Project"}</span>
+        {techLine ? (
+          <>
+            <span> | </span>
+            <span style={subCssProps}>{techLine}</span>
+          </>
+        ) : null}
+      </div>
+    );
+    const subLine = subtitle ? <div style={subCssProps}>{subtitle}</div> : null;
+    return (
+      <div>
+        {titleFirst ? (
+          <>
+            {nameLineStrong}
+            {subLine}
+          </>
+        ) : subtitle ? (
+          <>
+            <div className="font-semibold text-slate-900">{subtitle}</div>
+            {nameLineSoft}
+          </>
+        ) : (
+          nameLineStrong
+        )}
+        {bullets}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {renderEntryHeader(name, subtitle || undefined, dateStr, loc || undefined, customize, techLine)}
+      {bullets}
     </div>
   );
 }
@@ -328,38 +813,213 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   if ((data.website ?? "").trim()) contactItems.push({ icon: <IconGlobe />, label: prettyLabel(data.website.trim()), href: ensureHttp(data.website.trim()) });
   if ((data.github ?? "").trim()) contactItems.push({ icon: <IconGitHub />, label: prettyLabel(data.github!.trim()), href: ensureHttp(data.github!.trim()) });
 
-  const headerNode = (
-    <div className="text-center">
-      <div style={{ fontSize: baseFontPx + 16, fontWeight: 700, letterSpacing: "0.04em", color: "#0f172a" }}>
-        {(data.name ?? "").trim() || "Your Name"}
-      </div>
-      {(data.location ?? "").trim() ? (
-        <div style={{ marginTop: "2px", color: "#1a1a1a" }}>{data.location.trim()}</div>
-      ) : null}
-      {contactItems.length > 0 ? (
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: "4px", marginTop: "6px", color: "#1a1a1a" }}>
-          {contactItems.map((item, i) => (
-            <React.Fragment key={i}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                {item.icon}
-                {item.href ? (
-                  <a href={item.href} style={{ color: "#1a1a1a", textDecoration: "none" }}>{item.label}</a>
-                ) : (
-                  <span>{item.label}</span>
-                )}
-              </span>
-            </React.Fragment>
-          ))}
-        </div>
-      ) : null}
-      {data.summary?.trim() ? (
-        <div
-          style={{ marginTop: "6px", fontSize: "12px", color: "#1a1a1a", overflowWrap: "anywhere", wordBreak: "break-word" }}
-          dangerouslySetInnerHTML={{ __html: injectBulletStyles(data.summary.trim()) }}
-        />
-      ) : null}
-    </div>
+  const nameStyle: React.CSSProperties = {
+    fontSize: baseFontPx + 16,
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    color: "#0f172a",
+  };
+
+  /** Tighter gap between contact icon and label */
+  const CONTACT_ICON_GAP = "2px";
+  const contactFontSize = Math.max(11, baseFontPx * 0.92);
+  const contactColor = "#1a1a1a";
+
+  const renderContactChip = (
+    item: (typeof contactItems)[number],
+    i: number,
+    textAlign: "left" | "right" | "center" = "left"
+  ) => (
+    <span
+      key={i}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: CONTACT_ICON_GAP,
+        justifyContent: textAlign === "right" ? "flex-end" : textAlign === "center" ? "center" : "flex-start",
+      }}
+    >
+      {item.icon}
+      {item.href ? (
+        <a href={item.href} style={{ color: contactColor, textDecoration: "none", textAlign }}>
+          {item.label}
+        </a>
+      ) : (
+        <span style={{ textAlign }}>{item.label}</span>
+      )}
+    </span>
   );
+
+  const locTrim = (data.location ?? "").trim();
+  const nameTrim = (data.name ?? "").trim() || "Your Name";
+  const headlineTrim = (data.headline ?? "").trim();
+
+  const renderLocationWithIcon = (variant: "centeredBlock" | "leftBlock" | "inlineRow") => {
+    if (!locTrim) return null;
+    const inner = (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: CONTACT_ICON_GAP,
+          color: contactColor,
+          fontSize: variant === "inlineRow" ? undefined : contactFontSize,
+          lineHeight: 1.35,
+        }}
+      >
+        <IconLocation />
+        <span>{locTrim}</span>
+      </span>
+    );
+    if (variant === "centeredBlock") {
+      return <div style={{ marginTop: "2px", display: "flex", justifyContent: "center" }}>{inner}</div>;
+    }
+    if (variant === "leftBlock") {
+      return <div style={{ marginTop: "2px", display: "flex", alignItems: "center" }}>{inner}</div>;
+    }
+    return inner;
+  };
+
+  const headerLayout = normalizeHeaderLayout(customize.headerLayout);
+  const summaryAlignLeft = headerLayout === "splitRight" || headerLayout === "nameThenInline";
+
+  const summaryBlock = data.summary?.trim() ? (
+    <div
+      style={{
+        marginTop: summaryAlignLeft ? "10px" : "6px",
+        fontSize: "12px",
+        color: "#1a1a1a",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+        textAlign: summaryAlignLeft ? "left" : "center",
+      }}
+      dangerouslySetInnerHTML={{ __html: injectBulletStyles(data.summary.trim()) }}
+    />
+  ) : null;
+
+  const headerNode = (() => {
+    const headlineBlock = headlineTrim ? (
+      <div style={{ marginTop: "4px", fontSize: baseFontPx, color: "#334155", fontWeight: 600 }}>{headlineTrim}</div>
+    ) : null;
+
+    if (headerLayout === "splitRight") {
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+            <div style={{ textAlign: "left", flex: "1 1 auto", minWidth: 0 }}>
+              <div style={nameStyle}>{nameTrim}</div>
+              {renderLocationWithIcon("leftBlock")}
+              {headlineBlock}
+            </div>
+            {contactItems.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  gap: "5px",
+                  flexShrink: 0,
+                  color: contactColor,
+                  fontSize: contactFontSize,
+                  lineHeight: 1.35,
+                  maxWidth: "52%",
+                }}
+              >
+                {contactItems.map((item, i) => renderContactChip(item, i, "right"))}
+              </div>
+            ) : null}
+          </div>
+          {summaryBlock}
+        </div>
+      );
+    }
+
+    if (headerLayout === "nameThenInline") {
+      return (
+        <div>
+          <div style={nameStyle}>{nameTrim}</div>
+          {headlineBlock}
+          {locTrim || contactItems.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "10px",
+                rowGap: "6px",
+                marginTop: headlineTrim ? "6px" : "4px",
+                color: contactColor,
+                fontSize: contactFontSize,
+                lineHeight: 1.35,
+              }}
+            >
+              {renderLocationWithIcon("inlineRow")}
+              {contactItems.map((item, i) => renderContactChip(item, i, "left"))}
+            </div>
+          ) : null}
+          {summaryBlock}
+        </div>
+      );
+    }
+
+    if (headerLayout === "centerRow2") {
+      return (
+        <div className="text-center">
+          <div style={nameStyle}>{nameTrim}</div>
+          {locTrim || contactItems.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "10px",
+                rowGap: "6px",
+                marginTop: "6px",
+                color: contactColor,
+                fontSize: contactFontSize,
+                lineHeight: 1.35,
+              }}
+            >
+              {renderLocationWithIcon("inlineRow")}
+              {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
+            </div>
+          ) : null}
+          {headlineTrim ? (
+            <div style={{ marginTop: "6px", fontSize: baseFontPx, color: "#334155", fontWeight: 600 }}>{headlineTrim}</div>
+          ) : null}
+          {summaryBlock}
+        </div>
+      );
+    }
+
+    // stackCenter — name, location, headline, then contacts each on their own visual rows (centered)
+    return (
+      <div className="text-center">
+        <div style={nameStyle}>{nameTrim}</div>
+        {renderLocationWithIcon("centeredBlock")}
+        {headlineBlock}
+        {contactItems.length > 0 ? (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "10px",
+              marginTop: "6px",
+              color: contactColor,
+              fontSize: contactFontSize,
+              lineHeight: 1.35,
+            }}
+          >
+            {contactItems.map((item, i) => renderContactChip(item, i, "center"))}
+          </div>
+        ) : null}
+        {summaryBlock}
+      </div>
+    );
+  })();
 
   const customLabel = (data.customSectionTitle ?? "").trim() || "Custom";
   const order = customize.sectionOrder ?? PREVIEW_DEFAULT_ORDER;
@@ -370,13 +1030,27 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     } else if (key === "education" && (data.education ?? []).length) {
       blocks.push({ key: "edu-title", node: <SectionHeading title="Education" customize={customize} /> });
       data.education.forEach((e) => {
+        const degreeLine = [e.degree, e.field].filter(Boolean).join(" in ");
+        const title = degreeLine.trim() || e.school;
+        const subtitle = degreeLine.trim() ? e.school : undefined;
+        const dateStr = formatRange(e.start, e.end);
+        const hasLeftMeta = !!dateStr.trim();
         blocks.push({
           key: `edu-${e.id}`,
           node: (
             <div>
-              {renderEntryHeader(e.school, [e.degree, e.field].filter(Boolean).join(" in "), formatRange(e.start, e.end), e.city, customize)}
+              {renderEntryHeader(title, subtitle, dateStr, e.city, customize, undefined, e.gpa)}
               {e.coursework?.trim() ? (
-                <div className="text-slate-900" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: `Coursework: ${e.coursework.trim()}` }} />
+                <div
+                  className="text-slate-900"
+                  style={{ overflowWrap: "anywhere", wordBreak: "break-word", ...getCourseworkIndentStyle(customize, hasLeftMeta) }}
+                >
+                  <span className="font-semibold">Coursework:</span>{" "}
+                  <div
+                    className="inline min-w-0 align-baseline [&_p]:m-0 [&_p]:inline [&_p]:leading-[inherit]"
+                    dangerouslySetInnerHTML={{ __html: injectBulletStyles(e.coursework.trim()) }}
+                  />
+                </div>
               ) : null}
             </div>
           ),
@@ -385,13 +1059,24 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     } else if (key === "experience" && (data.experience ?? []).length) {
       blocks.push({ key: "exp-title", node: <SectionHeading title="Work Experience" customize={customize} /> });
       data.experience.forEach((x) => {
+        const dateStr = formatRange(x.start, x.end);
+        const hasLeftMeta = !!dateStr.trim();
         blocks.push({
           key: `exp-${x.id}`,
           node: (
             <div>
-              {renderEntryHeader(x.title, x.company, formatRange(x.start, x.end), x.location, customize)}
+              {renderEntryHeader(x.title, x.company, dateStr, x.location, customize)}
               {x.bulletsHtml?.trim() ? (
-                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(x.bulletsHtml.trim()) }} />
+                <div
+                  className="text-slate-800"
+                  style={{
+                    marginTop: ENTRY_BODY_TOP_GAP_PX,
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    ...getEntryBodyIndentStyle(customize, hasLeftMeta),
+                  }}
+                  dangerouslySetInnerHTML={{ __html: injectBulletStyles(x.bulletsHtml.trim()) }}
+                />
               ) : null}
             </div>
           ),
@@ -402,14 +1087,7 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
       data.projects.forEach((p) => {
         blocks.push({
           key: `proj-${p.id}`,
-          node: (
-            <div>
-              {renderEntryHeader(p.name, p.stack, "", undefined, customize)}
-              {p.bulletsHtml?.trim() ? (
-                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(p.bulletsHtml.trim()) }} />
-              ) : null}
-            </div>
-          ),
+          node: <div>{renderProjectBlock(p, customize)}</div>,
         });
       });
     } else if (key === "skills" && (data.skillBlocks ?? []).length) {
@@ -444,17 +1122,37 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
     } else if (key === "custom" && ((data.custom?.length ?? 0) > 0 || (data.customSectionTitle ?? "").trim())) {
       blocks.push({ key: "custom-title", node: <SectionHeading title={customLabel} customize={customize} /> });
       (data.custom ?? []).forEach((c) => {
+        const dateStr = formatRange(c.start, c.end);
+        const hasLeftMeta = !!dateStr.trim();
         blocks.push({
           key: `custom-${c.id}`,
           node: (
             <div>
-              {renderEntryHeader(c.title, c.subtitle, formatRange(c.start, c.end), c.location, customize)}
+              {renderEntryHeader(c.title, c.subtitle, dateStr, c.location, customize)}
               {c.mode === "text" ? (
                 c.text?.trim() ? (
-                  <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.text.trim()) }} />
+                  <div
+                    className="text-slate-800"
+                    style={{
+                      marginTop: ENTRY_BODY_TOP_GAP_PX,
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                      ...getCourseworkIndentStyle(customize, hasLeftMeta),
+                    }}
+                    dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.text.trim()) }}
+                  />
                 ) : null
               ) : c.bulletsHtml?.trim() ? (
-                <div className="mt-1 text-slate-800" style={{ overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "0.6em" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.bulletsHtml.trim()) }} />
+                <div
+                  className="text-slate-800"
+                  style={{
+                    marginTop: ENTRY_BODY_TOP_GAP_PX,
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    ...getEntryBodyIndentStyle(customize, hasLeftMeta),
+                  }}
+                  dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.bulletsHtml.trim()) }}
+                />
               ) : null}
             </div>
           ),
@@ -587,7 +1285,9 @@ const OverleafTabsPreview = React.forwardRef<
 
     blocks.forEach((b, i) => {
       const h = heights[i] ?? 0;
-      const gap = current.length > 0 ? customize.entryGapPx : 0;
+      const prevKey = i > 0 ? blocks[i - 1].key : undefined;
+      const gapBefore = marginTopBeforeBlock(b.key, prevKey, customize.sectionGapPx, customize.entryGapPx);
+      const gap = current.length > 0 ? gapBefore : 0;
       const spaceNeeded = h + gap;
 
       if (current.length > 0 && used + spaceNeeded > contentH - lineH * 6) {
@@ -597,7 +1297,7 @@ const OverleafTabsPreview = React.forwardRef<
       }
 
       current.push(b);
-      used += (current.length === 1 ? 0 : customize.entryGapPx) + h;
+      used += (current.length === 1 ? 0 : gapBefore) + h;
     });
 
     // Add the last page if it has content
@@ -614,6 +1314,9 @@ const OverleafTabsPreview = React.forwardRef<
 
   // Recalculate whenever inputs change
   useEffect(() => {
+    // Show new block content immediately; stale `pages` kept old layout until measure finished.
+    setPages([blocks]);
+
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       measureAndPaginate();
@@ -623,7 +1326,7 @@ const OverleafTabsPreview = React.forwardRef<
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks, contentH, contentW, baseFontPx, customize.lineHeight, fontFamily, customize.entryGapPx]);
+  }, [blocks, contentH, contentW, baseFontPx, customize.lineHeight, fontFamily, customize.entryGapPx, customize.sectionGapPx]);
 
   // Calculate scale to fit container width
   useEffect(() => {
@@ -737,7 +1440,7 @@ const OverleafTabsPreview = React.forwardRef<
             key={b.key}
             data-block
             style={{
-              marginTop: i === 0 ? 0 : customize.entryGapPx,
+              marginTop: marginTopBeforeBlock(b.key, i > 0 ? blocks[i - 1].key : undefined, customize.sectionGapPx, customize.entryGapPx),
               boxSizing: "border-box",
             }}
           >
@@ -775,17 +1478,25 @@ const OverleafTabsPreview = React.forwardRef<
               }}
             >
               <div className="resume-preview" style={{ ...commonTextStyle, height: contentH }}>
-                {pageBlocks.map((b, i) => (
-                  <div
-                    key={b.key}
-                    style={{
-                      marginTop: i === 0 ? 0 : customize.entryGapPx,
-                      boxSizing: "border-box",
-                    }}
-                  >
-                    {b.node}
-                  </div>
-                ))}
+                {pageBlocks.map((b, i) => {
+                  const g = blocks.findIndex((x) => x.key === b.key);
+                  const prevKey = g > 0 ? blocks[g - 1].key : undefined;
+                  const mt =
+                    pageIdx > 0 && i === 0
+                      ? 0
+                      : marginTopBeforeBlock(b.key, prevKey, customize.sectionGapPx, customize.entryGapPx);
+                  return (
+                    <div
+                      key={b.key}
+                      style={{
+                        marginTop: mt,
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      {b.node}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}
