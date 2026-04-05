@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
+import { APPLICATIONS_STORAGE_KEY } from "@/lib/resume/constants";
 import { useEffect, useMemo, useState } from "react";
 
 type Stage = "Saved" | "Applied" | "Interview" | "Offer" | "Rejected";
@@ -16,7 +17,6 @@ type Application = {
   createdAt: string;
 };
 
-const STORAGE_KEY = "guidegrads.applications.v1";
 const STAGES: Stage[] = ["Saved", "Applied", "Interview", "Offer", "Rejected"];
 
 function uid() {
@@ -28,7 +28,7 @@ function uid() {
 function parseAppsFromLocal(): Application[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(APPLICATIONS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Application[];
     if (!Array.isArray(parsed)) return [];
@@ -93,7 +93,7 @@ export default function ApplicationsBoard() {
     if (authLoading || !hydrated) return;
     if (user) return;
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
+    window.localStorage.setItem(APPLICATIONS_STORAGE_KEY, JSON.stringify(apps));
   }, [apps, user, authLoading, hydrated]);
 
   useEffect(() => {

@@ -1,12 +1,10 @@
 import { createClient } from "@/lib/supabase/client";
 import type { ResumeCustomize, ResumeData } from "@/components/resume/ResumeBuilder";
-import type { CoverLetterData } from "@/types/coverLetter";
 
+/** Stored in `resumes.payload` only — cover letter lives in `cover_letters`. */
 export type ResumeCloudPayload = {
   data?: ResumeData;
   customize?: ResumeCustomize;
-  coverLetterCustomize?: ResumeCustomize;
-  coverLetter?: CoverLetterData;
   updatedAt?: number;
 };
 
@@ -17,8 +15,33 @@ export type ResumeRow = {
   updated_at: string;
 };
 
+const SESSION_READY_MS = 5000;
+const SESSION_POLL_MS = 50;
+
+/**
+ * After login/refresh, the browser client can lag behind React auth state; queries run as anon and RLS
+ * returns no rows. Wait until getUser() resolves before hitting the DB.
+ */
+async function waitForSupabaseUser(): Promise<boolean> {
+  const supabase = createClient();
+  const deadline = Date.now() + SESSION_READY_MS;
+  while (Date.now() < deadline) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) return true;
+    await new Promise((r) => setTimeout(r, SESSION_POLL_MS));
+  }
+  return false;
+}
+
 export async function listResumes(): Promise<ResumeRow[]> {
   const supabase = createClient();
+  const sessionReady = await waitForSupabaseUser();
+  if (!sessionReady) {
+    console.warn("listResumes: Supabase session not ready in time — try refreshing the page.");
+    return [];
+  }
   const { data, error } = await supabase
     .from("resumes")
     .select("id,name,payload,updated_at")
@@ -34,6 +57,8 @@ export async function listResumes(): Promise<ResumeRow[]> {
 
 export async function getResume(id: string): Promise<ResumeRow | null> {
   const supabase = createClient();
+  const sessionReady = await waitForSupabaseUser();
+  if (!sessionReady) return null;
   const { data, error } = await supabase
     .from("resumes")
     .select("id,name,payload,updated_at")

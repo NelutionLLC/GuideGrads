@@ -1715,7 +1715,10 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
 
     const wrapBanner = (node: React.ReactNode) => {
       if (!isBanner) return node;
-      /** Full-bleed bar: explicit page width + negative inset so color reaches the sheet edges. */
+      /**
+       * Full-bleed banner (same idea as cover letter): break out of the padded flow column with
+       * negative horizontal inset so the bar spans the full sheet width.
+       */
       return (
         <div
           style={{
@@ -1723,11 +1726,17 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
             width: LETTER_W,
             boxSizing: "border-box",
             marginLeft: -contentPadPx,
-            marginTop: -padYpx,
+            marginRight: -contentPadPx,
+            /**
+             * Top offset is handled on page 1 by shifting the clip into the sheet’s top padding (see paginated
+             * page wrapper). A negative margin here was clipped by `overflow: hidden` on the clip, leaving a
+             * white band — same full-bleed idea as the cover letter’s header as direct child of the padded page.
+             */
             paddingTop: padYpx + 14,
             paddingBottom: 22,
             paddingLeft: contentPadPx,
             paddingRight: contentPadPx,
+            marginBottom: Math.max(6, Math.min(20, customize.sectionGapPx + 2)),
           }}
         >
           {node}
@@ -2308,8 +2317,11 @@ const OverleafTabsPreview = React.forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Full page width + horizontal padding so banner can bleed to edges without being clipped (see page wrappers). */
   const commonTextStyle: React.CSSProperties = {
-    width: contentW,
+    width: LETTER_W,
+    paddingLeft: padX,
+    paddingRight: padX,
     fontFamily,
     fontSize: baseFontPx,
     /* Body bullets use px line-height via .resume-preview p/li; keep unitless here so header/name lines aren’t squashed. */
@@ -2379,15 +2391,15 @@ const OverleafTabsPreview = React.forwardRef<
         ref={measureRef}
         aria-hidden
         style={{
-          width: contentW,
+          width: LETTER_W,
           position: "fixed",
-          left: -contentW - 100,
+          left: -LETTER_W - 100,
           top: 0,
           visibility: "hidden",
           pointerEvents: "none",
         }}
       >
-        <div data-resume-flow-strip style={{ width: contentW, display: "flow-root" }}>
+        <div data-resume-flow-strip style={{ width: LETTER_W, display: "flow-root", boxSizing: "border-box" }}>
           <ResumeFlowColumn
             blocks={blocks}
             sectionMarginLevel={customize.sectionGapPx}
@@ -2422,6 +2434,8 @@ const OverleafTabsPreview = React.forwardRef<
             /** Last page + tiny intermediate pages use full LETTER_H. Other intermediate pages shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
             const pageHeight = (isLastPage || isTinyPage) ? LETTER_H : padY * 2 + clipAreaH;
             const bottomFiller = (isLastPage || isTinyPage) ? Math.max(0, LETTER_H - padY * 2 - clipAreaH) : 0;
+            /** Page 1 + banner: pull the clip into the top padding so the bar isn’t clipped (cover-letter behavior). */
+            const bannerBleedFirstPage = pageIdx === 0 && customize.headerColorMode === "banner";
             return (
             <div
               key={pageIdx}
@@ -2440,8 +2454,10 @@ const OverleafTabsPreview = React.forwardRef<
             >
               <div
                 style={{
-                  width: contentW,
-                  overflow: "hidden",
+                  width: LETTER_W,
+                  marginLeft: -padX,
+                  marginTop: bannerBleedFirstPage ? -padY : 0,
+                  overflow: "visible",
                   boxSizing: "border-box",
                 }}
               >
@@ -2449,11 +2465,12 @@ const OverleafTabsPreview = React.forwardRef<
                 <div
                   style={{
                     height: clipAreaH,
-                    width: contentW,
+                    width: LETTER_W,
                     overflow: "hidden",
                     display: "flow-root",
                     isolation: "isolate",
                     contain: "paint",
+                    boxSizing: "border-box",
                   }}
                 >
                   <ResumeFlowColumn
@@ -2465,6 +2482,7 @@ const OverleafTabsPreview = React.forwardRef<
                     style={commonTextStyle}
                   />
                 </div>
+                {bannerBleedFirstPage ? <div style={{ height: padY }} aria-hidden /> : null}
                 {pm.padBottom > 0 ? <div style={{ height: pm.padBottom }} aria-hidden /> : null}
                 {bottomFiller > 0 ? <div style={{ height: bottomFiller }} aria-hidden /> : null}
               </div>

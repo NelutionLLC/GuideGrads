@@ -1,8 +1,10 @@
 "use client";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import * as coverLetterCloud from "@/lib/cover-letter/cloud";
 import * as resumeCloud from "@/lib/resume/cloud";
-import { ACTIVE_RESUME_ID_KEY } from "@/lib/resume/constants";
+import { ACTIVE_RESUME_ID_KEY, RESUME_BUILDER_STORAGE_KEY } from "@/lib/resume/constants";
+import { emptyCoverLetter, normalizeCoverLetter } from "@/types/coverLetter";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import RichTextArea from "./RichTextArea";
 import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
@@ -177,9 +179,6 @@ export type ResumeCustomize = {
   /** Cover letter preview: show icons beside profile contact lines (location, phone, links, etc.). */
   coverLetterShowContactIcons?: boolean;
 };
-
-/** Shared with cover letter page — same localStorage blob. */
-export const RESUME_BUILDER_STORAGE_KEY = "guidegrads.resume.builder.v2";
 
 /** ---------------- Defaults ---------------- */
 export const emptyResume: ResumeData = {
@@ -736,6 +735,73 @@ function ThumbDash({ className = "w-7" }: { className?: string }) {
   return <div className={`h-0.5 shrink-0 rounded-sm bg-white/45 ${className}`} />;
 }
 
+function readLocalResumeBundleRaw(): Record<string, unknown> {
+  try {
+    const raw = window.localStorage.getItem(RESUME_BUILDER_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/** Stable string for “did resume payload change?” — avoids re-writing Supabase on login/hydration. */
+function snapshotResumeForCloud(data: ResumeData, customize: ResumeCustomize): string {
+  return JSON.stringify({ data, customize });
+}
+
+const SNAPSHOT_EMPTY_RESUME_CLOUD = snapshotResumeForCloud(emptyResume, defaultCustomize);
+
+/** Merge resume row + optional `cover_letters` row into the shared localStorage bundle. */
+async function mergeCloudResumeRowIntoLocalStorage(row: resumeCloud.ResumeRow) {
+  const p = row.payload;
+  const prev = readLocalResumeBundleRaw();
+  try {
+    const bundle: Record<string, unknown> = {
+      ...prev,
+      data: p.data ?? prev.data,
+      customize: p.customize ?? prev.customize,
+      updatedAt: Date.now(),
+    };
+    const cl = await coverLetterCloud.getCoverLetterForResume(row.id);
+    if (cl?.coverLetter) bundle.coverLetter = cl.coverLetter;
+    if (cl?.coverLetterCustomize) {
+      bundle.coverLetterCustomize = mergeStoredResumeCustomize(cl.coverLetterCustomize);
+    }
+    const legacy = p as unknown as Record<string, unknown>;
+    if (!bundle.coverLetter && legacy.coverLetter) {
+      try {
+        bundle.coverLetter = normalizeCoverLetter(legacy.coverLetter);
+      } catch {
+        /* ignore bad legacy */
+      }
+    }
+    if (!bundle.coverLetterCustomize && legacy.coverLetterCustomize) {
+      try {
+        bundle.coverLetterCustomize = mergeStoredResumeCustomize(legacy.coverLetterCustomize as ResumeCustomize);
+      } catch {
+        /* ignore */
+      }
+    }
+    window.localStorage.setItem(RESUME_BUILDER_STORAGE_KEY, JSON.stringify(bundle));
+  } catch (e) {
+    console.warn("mergeCloudResumeRowIntoLocalStorage failed", e);
+    try {
+      window.localStorage.setItem(
+        RESUME_BUILDER_STORAGE_KEY,
+        JSON.stringify({
+          ...prev,
+          data: p.data ?? prev.data,
+          customize: p.customize ?? prev.customize,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export default function ResumeBuilder() {
   /** IMPORTANT: do NOT read localStorage during render (prevents hydration mismatch) */
   const [data, setData] = useState<ResumeData>(emptyResume);
@@ -793,16 +859,8 @@ export default function ResumeBuilder() {
   const [cloudReady, setCloudReady] = useState(false);
   const skipCloudSave = useRef(false);
   const creatingCloudResume = useRef(false);
-
-  function readLocalBundleRaw(): Record<string, unknown> {
-    try {
-      const raw = window.localStorage.getItem(RESUME_BUILDER_STORAGE_KEY);
-      if (!raw) return {};
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
+  /** Last resume `{ data, customize }` we loaded from cloud or successfully saved — skip autosave if unchanged. */
+  const baselineResumeCloudSnapshot = useRef<string | null>(null);
 
   /** Load list + active resume from Supabase when signed in. */
   useEffect(() => {
@@ -810,6 +868,7 @@ export default function ResumeBuilder() {
     if (!user) {
       setResumeRows([]);
       setActiveResumeId(null);
+      baselineResumeCloudSnapshot.current = null;
       setCloudReady(true);
       return;
     }
@@ -830,22 +889,19 @@ export default function ResumeBuilder() {
           const row = rows.find((r) => r.id === pick.id);
           if (row) {
             const p = row.payload;
-            if (p.data) setData({ ...emptyResume, ...p.data });
-            if (p.customize) setCustomize(mergeStoredResumeCustomize(p.customize));
-            const bundle = {
-              ...readLocalBundleRaw(),
-              ...p,
-              data: p.data ?? readLocalBundleRaw().data,
-              customize: p.customize ?? readLocalBundleRaw().customize,
-              updatedAt: Date.now(),
-            };
-            window.localStorage.setItem(RESUME_BUILDER_STORAGE_KEY, JSON.stringify(bundle));
+            const mergedData = p.data ? { ...emptyResume, ...p.data } : emptyResume;
+            const mergedCustomize = p.customize ? mergeStoredResumeCustomize(p.customize) : defaultCustomize;
+            setData(mergedData);
+            setCustomize(mergedCustomize);
+            baselineResumeCloudSnapshot.current = snapshotResumeForCloud(mergedData, mergedCustomize);
+            await mergeCloudResumeRowIntoLocalStorage(row);
           }
           requestAnimationFrame(() => {
             skipCloudSave.current = false;
           });
         } else {
           setActiveResumeId(null);
+          baselineResumeCloudSnapshot.current = SNAPSHOT_EMPTY_RESUME_CLOUD;
         }
       } catch (e) {
         console.warn("Cloud resume load failed", e);
@@ -858,35 +914,47 @@ export default function ResumeBuilder() {
     };
   }, [loaded, user, authLoading]);
 
-  /** Debounced save to Supabase when signed in. */
+  /** Debounced save to Supabase when signed in — only when resume content actually changed vs last load/save. */
   useEffect(() => {
     if (!loaded || !user || !cloudReady || authLoading) return;
     if (skipCloudSave.current) return;
     const t = window.setTimeout(async () => {
       try {
-        const prev = readLocalBundleRaw();
-        const payload: resumeCloud.ResumeCloudPayload = {
-          ...(prev as resumeCloud.ResumeCloudPayload),
-          data,
-          customize,
-          updatedAt: Date.now(),
-        };
+        const snap = snapshotResumeForCloud(data, customize);
         if (activeResumeId) {
-          await resumeCloud.updateResume(activeResumeId, payload);
-        } else {
-          if (creatingCloudResume.current) return;
-          creatingCloudResume.current = true;
-          try {
-            const row = await resumeCloud.createResume(
-              `Resume No.${resumeRows.length + 1}`,
-              payload
-            );
-            setActiveResumeId(row.id);
-            window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
-            setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
-          } finally {
-            creatingCloudResume.current = false;
+          if (baselineResumeCloudSnapshot.current !== null && snap === baselineResumeCloudSnapshot.current) {
+            return;
           }
+          const payload: resumeCloud.ResumeCloudPayload = {
+            data,
+            customize,
+            updatedAt: Date.now(),
+          };
+          await resumeCloud.updateResume(activeResumeId, payload);
+          baselineResumeCloudSnapshot.current = snap;
+          return;
+        }
+        if (snap === SNAPSHOT_EMPTY_RESUME_CLOUD) {
+          return;
+        }
+        if (creatingCloudResume.current) return;
+        creatingCloudResume.current = true;
+        try {
+          const payload: resumeCloud.ResumeCloudPayload = {
+            data,
+            customize,
+            updatedAt: Date.now(),
+          };
+          const row = await resumeCloud.createResume(
+            `Resume No.${resumeRows.length + 1}`,
+            payload
+          );
+          setActiveResumeId(row.id);
+          window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+          setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
+          baselineResumeCloudSnapshot.current = snap;
+        } finally {
+          creatingCloudResume.current = false;
         }
       } catch (e) {
         console.warn("Cloud resume save failed", e);
@@ -1772,19 +1840,17 @@ export default function ResumeBuilder() {
                               setActiveResumeId(row.id);
                               window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
                               const p = row.payload;
-                              if (p.data) setData({ ...emptyResume, ...p.data });
-                              if (p.customize) setCustomize(mergeStoredResumeCustomize(p.customize));
-                              const bundle = {
-                                ...readLocalBundleRaw(),
-                                ...p,
-                                data: p.data,
-                                customize: p.customize,
-                                updatedAt: Date.now(),
-                              };
-                              window.localStorage.setItem(
-                                RESUME_BUILDER_STORAGE_KEY,
-                                JSON.stringify(bundle)
+                              const mergedData = p.data ? { ...emptyResume, ...p.data } : emptyResume;
+                              const mergedCustomize = p.customize
+                                ? mergeStoredResumeCustomize(p.customize)
+                                : defaultCustomize;
+                              setData(mergedData);
+                              setCustomize(mergedCustomize);
+                              baselineResumeCloudSnapshot.current = snapshotResumeForCloud(
+                                mergedData,
+                                mergedCustomize
                               );
+                              await mergeCloudResumeRowIntoLocalStorage(row);
                               requestAnimationFrame(() => {
                                 skipCloudSave.current = false;
                               });
@@ -1824,10 +1890,16 @@ export default function ResumeBuilder() {
                         setData(emptyResume);
                         setCustomize(defaultCustomize);
                         setActiveResumeId(row.id);
+                        baselineResumeCloudSnapshot.current = snapshotResumeForCloud(emptyResume, defaultCustomize);
                         window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
                         window.localStorage.setItem(
                           RESUME_BUILDER_STORAGE_KEY,
-                          JSON.stringify({ ...payload })
+                          JSON.stringify({
+                            ...readLocalResumeBundleRaw(),
+                            ...payload,
+                            coverLetter: emptyCoverLetter(),
+                            coverLetterCustomize: defaultCustomize,
+                          })
                         );
                         setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
                         requestAnimationFrame(() => {

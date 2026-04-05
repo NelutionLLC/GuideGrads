@@ -73,3 +73,34 @@ export function normalizeCoverLetter(raw: unknown): CoverLetterData {
     signature: sig,
   };
 }
+
+/** Rough visible text from HTML for “has the user typed in the body?” checks (no DOM). */
+export function coverLetterBodyVisibleText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Preview shows italic placeholders until the user touches Profile, Recipient, or Body; then empty fields
+ * render blank with normal styling (no “Full Name” / “Recipient Name” / etc.).
+ */
+export function coverLetterShouldHidePreviewPlaceholders(letter: CoverLetterData): boolean {
+  const p = letter.profile;
+  const profileTouched = [
+    p.fullName,
+    p.location,
+    p.phone,
+    p.email,
+    p.linkedin,
+    p.github,
+    p.portfolio,
+  ].some((s) => (s ?? "").trim().length > 0);
+  const recipientTouched = [letter.recipientName, letter.recipientTitle, letter.companyName].some(
+    (s) => (s ?? "").trim().length > 0
+  );
+  const bodyTouched = coverLetterBodyVisibleText(letter.bodyHtml ?? "").length > 0;
+  return profileTouched || recipientTouched || bodyTouched;
+}
