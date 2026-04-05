@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@/components/auth/AuthProvider";
+import { createClient } from "@/lib/supabase/client";
 import { useEffect, useMemo, useState } from "react";
 
 type Stage = "Saved" | "Applied" | "Interview" | "Offer" | "Rejected";
@@ -18,27 +20,113 @@ const STORAGE_KEY = "guidegrads.applications.v1";
 const STAGES: Stage[] = ["Saved", "Applied", "Interview", "Offer", "Rejected"];
 
 function uid() {
-  return Math.random().toString(36).slice(2, 10);
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2, 12);
+}
+
+function parseAppsFromLocal(): Application[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Application[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
 }
 
 export default function ApplicationsBoard() {
-    const [apps, setApps] = useState<Application[]>(() => {
-        if (typeof window === "undefined") return [];
-        try {
-          const raw = window.localStorage.getItem(STORAGE_KEY);
-          if (!raw) return [];
-          const parsed = JSON.parse(raw) as Application[];
-          if (!Array.isArray(parsed)) return [];
-          return parsed;
-        } catch {
-          return [];
-        }
-    })
+  const { user, loading: authLoading } = useAuth();
+  const [apps, setApps] = useState<Application[]>([]);
+  const [hydrated, setHydrated] = useState(false);
 
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
-      }, [apps]);
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setApps(parseAppsFromLocal());
+      setHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("applications")
+          .select("id,company,role,status,metadata,created_at")
+          .order("created_at", { ascending: false });
+        if (cancelled || error) {
+          if (!cancelled) setApps([]);
+          return;
+        }
+        const mapped: Application[] = (data ?? []).map((row) => {
+          const m = (row.metadata ?? {}) as Record<string, unknown>;
+          return {
+            id: row.id as string,
+            company: (row.company as string) ?? "",
+            role: (row.role as string) ?? "",
+            location: typeof m.location === "string" ? m.location : undefined,
+            visaTag: (m.visaTag as Application["visaTag"]) ?? "Unknown",
+            stage: (row.status as Stage) ?? "Saved",
+            createdAt:
+              (typeof m.createdAt === "string" && m.createdAt) ||
+              (row.created_at as string) ||
+              new Date().toISOString(),
+          };
+        });
+        if (!cancelled) setApps(mapped);
+      } catch {
+        if (!cancelled) setApps([]);
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, authLoading]);
+
+  useEffect(() => {
+    if (authLoading || !hydrated) return;
+    if (user) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
+  }, [apps, user, authLoading, hydrated]);
+
+  useEffect(() => {
+    if (authLoading || !hydrated || !user) return;
+    const t = window.setTimeout(async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user: u },
+        } = await supabase.auth.getUser();
+        if (!u) return;
+        await supabase.from("applications").delete().eq("user_id", u.id);
+        if (apps.length === 0) return;
+        const { error } = await supabase.from("applications").insert(
+          apps.map((a) => ({
+            user_id: u.id,
+            company: a.company,
+            role: a.role,
+            status: a.stage,
+            metadata: {
+              location: a.location ?? null,
+              visaTag: a.visaTag ?? "Unknown",
+              createdAt: a.createdAt,
+            },
+          }))
+        );
+        if (error) console.warn("applications sync", error);
+      } catch (e) {
+        console.warn("applications sync", e);
+      }
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, [apps, user, hydrated, authLoading]);
 
     const [overStage, setOverStage] = useState<Stage | null>(null);
   const [open, setOpen] = useState(false);

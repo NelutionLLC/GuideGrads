@@ -10,58 +10,12 @@ import type { CoverLetterData } from "@/types/coverLetter";
 import { emptyCoverLetter, normalizeCoverLetter } from "@/types/coverLetter";
 import {
   RESUME_BUILDER_STORAGE_KEY,
-  defaultAccentApply,
   defaultCustomize,
   emptyResume,
+  mergeStoredResumeCustomize,
   type ResumeCustomize,
   type ResumeData,
 } from "@/components/resume/ResumeBuilder";
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function mergeCustomize(parsed: ResumeCustomize | undefined): ResumeCustomize {
-  if (!parsed) return defaultCustomize;
-  const merged = { ...defaultCustomize, ...parsed };
-  merged.accentApply = { ...defaultAccentApply, ...parsed.accentApply };
-  merged.accentColor =
-    typeof merged.accentColor === "string" && merged.accentColor.trim()
-      ? merged.accentColor.trim()
-      : defaultCustomize.accentColor;
-  const hm = merged.headerColorMode as string;
-  merged.headerColorMode = hm === "banner" || hm === "advanced" ? "banner" : "basic";
-  const el = merged.entryLayout as string;
-  merged.entryLayout = el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
-  const hl = merged.headerLayout as string;
-  merged.headerLayout =
-    hl === "stackCenter" ||
-    hl === "centerRow2" ||
-    hl === "splitRight" ||
-    hl === "nameThenInline" ||
-    hl === "stackLeft"
-      ? hl
-      : hl === "split"
-        ? "splitRight"
-        : hl === "centered"
-          ? "stackCenter"
-          : "stackCenter";
-  const tlo = merged.entryListingTitleOrder as string;
-  merged.entryListingTitleOrder = tlo === "subtitleFirst" ? "subtitleFirst" : "titleFirst";
-  const mlo = merged.entryListingMetaOrder as string;
-  merged.entryListingMetaOrder = mlo === "locationFirst" ? "locationFirst" : "dateFirst";
-  merged.lineHeight = clamp(Number(merged.lineHeight) || defaultCustomize.lineHeight, 1.1, 2);
-  merged.sectionGapPx = clamp(
-    Number.isFinite(Number(merged.sectionGapPx)) ? Number(merged.sectionGapPx) : defaultCustomize.sectionGapPx,
-    1,
-    20
-  );
-  merged.coverLetterShowContactIcons =
-    typeof merged.coverLetterShowContactIcons === "boolean"
-      ? merged.coverLetterShowContactIcons
-      : defaultCustomize.coverLetterShowContactIcons;
-  return merged;
-}
 
 function loadBundleFromStorage(): {
   data: ResumeData;
@@ -86,9 +40,9 @@ function loadBundleFromStorage(): {
       coverLetter?: Partial<CoverLetterData>;
     };
     const data = parsed?.data ? { ...emptyResume, ...parsed.data } : emptyResume;
-    const resumeCustomize = mergeCustomize(parsed?.customize);
+    const resumeCustomize = mergeStoredResumeCustomize(parsed?.customize);
     /** Isolated from resume — first time, copy current resume customize so the letter looks the same. */
-    const coverLetterCustomize = mergeCustomize(
+    const coverLetterCustomize = mergeStoredResumeCustomize(
       parsed?.coverLetterCustomize !== undefined && parsed?.coverLetterCustomize !== null
         ? parsed.coverLetterCustomize
         : parsed?.customize
