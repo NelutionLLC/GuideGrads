@@ -511,9 +511,15 @@ function normalizePageWindows(
     }
   }
 
-  const MIN_TAIL_PX = 8;
-  while (compact.length > 1 && compact[compact.length - 1].contentEnd - compact[compact.length - 1].start < MIN_TAIL_PX) {
-    const tail = compact.pop()!;
+  // Merge a tiny tail page into the previous page if they together fit within one viewport.
+  // Threshold: anything less than 30% of viewport height is "tiny" — catches single-line overflows
+  // that happen when tight line spacing (e.g. lineHeight 1.1) pushes just one line past the break.
+  const MIN_TAIL_PX = Math.max(8, Math.round(vh * 0.30));
+  while (compact.length > 1) {
+    const tail = compact[compact.length - 1];
+    const tailH = tail.contentEnd - tail.start;
+    if (tailH >= MIN_TAIL_PX) break;
+    compact.pop();
     const prev = compact[compact.length - 1];
     if (th - prev.start <= vh + 1) {
       prev.contentEnd = th;
@@ -527,6 +533,32 @@ function normalizePageWindows(
   if (bands.length && compact.length > 1) {
     const snapped = snapPageStartsToLineTops(compact, bands, th, EPS);
     if (snapped.length) finalOut = snapped;
+  }
+
+  // Trim leading blank from non-first page windows.
+  // When a page window starts with invisible space (no text bands), advance its start
+  // to the first band top so the page doesn't open with a blank gap at the top.
+  // The blank area is absorbed by the previous page's contentEnd (it stays clipped there).
+  if (bands.length && finalOut.length > 1) {
+    const BLANK_TRIM = Math.max(6, Math.round(vh * 0.012));
+    const trimmed = finalOut.map((w) => ({ ...w }));
+    for (let i = 1; i < trimmed.length; i++) {
+      const s = trimmed[i].start;
+      let firstBandT: number | null = null;
+      for (const { t } of bands) {
+        if (t >= s - EPS) {
+          firstBandT = firstBandT === null ? t : Math.min(firstBandT, t);
+        }
+      }
+      if (firstBandT !== null && firstBandT - s > BLANK_TRIM) {
+        const ns = Math.floor(firstBandT);
+        if (ns > trimmed[i - 1].start + 1 && ns < trimmed[i].contentEnd) {
+          trimmed[i - 1].contentEnd = ns;
+          trimmed[i].start = ns;
+        }
+      }
+    }
+    finalOut = trimmed;
   }
 
   return finalOut.length ? finalOut : [{ start: 0, contentEnd: th }];
@@ -2188,7 +2220,8 @@ const OverleafTabsPreview = React.forwardRef<
 
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise((r) => setTimeout(() => r(null), 80));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await new Promise((r) => setTimeout(() => r(null), 150));
 
     const strip = root.querySelector<HTMLElement>("[data-resume-flow-strip]");
     if (!strip) { setTimeout(() => measureAndPaginate(), 200); return; }
@@ -2286,17 +2319,16 @@ const OverleafTabsPreview = React.forwardRef<
 
   const totalScaledHeight = useMemo(() => {
     const numPages = pm.pageCount || 1;
+    // Intermediate pages with < 35% of viewport content look like tiny cards — treat them as full pages.
+    const MIN_CLIP_H = Math.max(pm.lineSnapPx * 6, Math.round(pm.viewportH * 0.35), 80);
     let total = 0;
     for (let i = 0; i < numPages; i++) {
       const isLast = i === numPages - 1;
-      if (isLast) {
-        total += LETTER_H;
-      } else {
-        const win = pm.pageWindows[i] ?? { start: 0, contentEnd: pm.viewportH };
-        const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
-        const clipAreaH = Math.min(pm.viewportH, clipH);
-        total += padY * 2 + clipAreaH;
-      }
+      const win = pm.pageWindows[i] ?? { start: 0, contentEnd: pm.viewportH };
+      const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
+      const clipAreaH = Math.min(pm.viewportH, clipH);
+      const isTiny = !isLast && clipAreaH < MIN_CLIP_H;
+      total += (isLast || isTiny) ? LETTER_H : padY * 2 + clipAreaH;
     }
     total += 24 * Math.max(0, numPages - 1);
     return total * scale;
@@ -2384,8 +2416,12 @@ const OverleafTabsPreview = React.forwardRef<
             /** Must match the pagination window height — not always `viewportH` when we break early (e.g. before Skills). Using full viewport on a short window showed extra lines and duplicated them on the next page. */
             const clipAreaH = Math.min(pm.viewportH, clipH);
             const isLastPage = pageIdx === pm.pageCount - 1;
-            /** Last page is always full LETTER_H (real page). Intermediate pages with early breaks shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
-            const pageHeight = isLastPage ? LETTER_H : padY * 2 + clipAreaH;
+            // Must match totalScaledHeight logic — same threshold for tiny-page detection.
+            const MIN_CLIP_H = Math.max(pm.lineSnapPx * 6, Math.round(pm.viewportH * 0.35), 80);
+            const isTinyPage = !isLastPage && clipAreaH < MIN_CLIP_H;
+            /** Last page + tiny intermediate pages use full LETTER_H. Other intermediate pages shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
+            const pageHeight = (isLastPage || isTinyPage) ? LETTER_H : padY * 2 + clipAreaH;
+            const bottomFiller = (isLastPage || isTinyPage) ? Math.max(0, LETTER_H - padY * 2 - clipAreaH) : 0;
             return (
             <div
               key={pageIdx}
@@ -2430,6 +2466,7 @@ const OverleafTabsPreview = React.forwardRef<
                   />
                 </div>
                 {pm.padBottom > 0 ? <div style={{ height: pm.padBottom }} aria-hidden /> : null}
+                {bottomFiller > 0 ? <div style={{ height: bottomFiller }} aria-hidden /> : null}
               </div>
             </div>
             );

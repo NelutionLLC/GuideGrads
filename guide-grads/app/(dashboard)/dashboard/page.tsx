@@ -12,19 +12,19 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="rounded-2xl bg-white/5 p-4">
             <div className="text-sm text-white/70">Applications</div>
-            <div className="mt-2 text-3xl font-semibold">12</div>
-            <div className="mt-1 text-sm text-white/50">+3 this week</div>
+            <div className="mt-2 text-3xl font-semibold">0</div>
+            <div className="mt-1 text-sm text-white/50">+0 this week</div>
           </div>
   
           <div className="rounded-2xl bg-white/5 p-4">
             <div className="text-sm text-white/70">Interviews</div>
-            <div className="mt-2 text-3xl font-semibold">2</div>
-            <div className="mt-1 text-sm text-white/50">1 upcoming</div>
+            <div className="mt-2 text-3xl font-semibold">0</div>
+            <div className="mt-1 text-sm text-white/50">0 upcoming</div>
           </div>
   
           <div className="rounded-2xl bg-white/5 p-4">
             <div className="text-sm text-white/70">Visa reminders</div>
-            <div className="mt-2 text-3xl font-semibold">1</div>
+            <div className="mt-2 text-3xl font-semibold">0</div>
             <div className="mt-1 text-sm text-white/50">OPT check-in</div>
           </div>
         </div>
