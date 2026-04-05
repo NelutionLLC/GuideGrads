@@ -1,5 +1,8 @@
 "use client";
 
+import { useAuth } from "@/components/auth/AuthProvider";
+import * as resumeCloud from "@/lib/resume/cloud";
+import { ACTIVE_RESUME_ID_KEY } from "@/lib/resume/constants";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import RichTextArea from "./RichTextArea";
 import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
@@ -581,6 +584,50 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+/** Merge stored customize blob (localStorage / Supabase). Used by CoverLetterStudio. */
+export function mergeStoredResumeCustomize(parsed: ResumeCustomize | undefined): ResumeCustomize {
+  if (!parsed) return defaultCustomize;
+  const merged = { ...defaultCustomize, ...parsed };
+  merged.accentApply = { ...defaultAccentApply, ...parsed.accentApply };
+  merged.accentColor =
+    typeof merged.accentColor === "string" && merged.accentColor.trim()
+      ? merged.accentColor.trim()
+      : defaultCustomize.accentColor;
+  const hm = merged.headerColorMode as string;
+  merged.headerColorMode = hm === "banner" || hm === "advanced" ? "banner" : "basic";
+  const el = merged.entryLayout as string;
+  merged.entryLayout =
+    el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
+  const hl = merged.headerLayout as string;
+  merged.headerLayout =
+    hl === "stackCenter" ||
+    hl === "centerRow2" ||
+    hl === "splitRight" ||
+    hl === "nameThenInline" ||
+    hl === "stackLeft"
+      ? hl
+      : hl === "split"
+        ? "splitRight"
+        : hl === "centered"
+          ? "stackCenter"
+          : "stackCenter";
+  const tlo = merged.entryListingTitleOrder as string;
+  merged.entryListingTitleOrder = tlo === "subtitleFirst" ? "subtitleFirst" : "titleFirst";
+  const mlo = merged.entryListingMetaOrder as string;
+  merged.entryListingMetaOrder = mlo === "locationFirst" ? "locationFirst" : "dateFirst";
+  merged.lineHeight = clamp(Number(merged.lineHeight) || defaultCustomize.lineHeight, 1.1, 2);
+  merged.sectionGapPx = clamp(
+    Number.isFinite(Number(merged.sectionGapPx)) ? Number(merged.sectionGapPx) : defaultCustomize.sectionGapPx,
+    1,
+    20
+  );
+  merged.coverLetterShowContactIcons =
+    typeof merged.coverLetterShowContactIcons === "boolean"
+      ? merged.coverLetterShowContactIcons
+      : defaultCustomize.coverLetterShowContactIcons;
+  return merged;
+}
+
 function SliderRow({
   label,
   valueLabel,
@@ -707,48 +754,7 @@ export default function ResumeBuilder() {
           updatedAt?: number;
         };
         if (parsed?.data) setData({ ...emptyResume, ...parsed.data });
-        if (parsed?.customize) {
-          const merged = { ...defaultCustomize, ...parsed.customize };
-          merged.accentApply = { ...defaultAccentApply, ...parsed.customize?.accentApply };
-          merged.accentColor =
-            typeof merged.accentColor === "string" && merged.accentColor.trim()
-              ? merged.accentColor.trim()
-              : defaultCustomize.accentColor;
-          const hm = merged.headerColorMode as string;
-          merged.headerColorMode =
-            hm === "banner" || hm === "advanced" ? "banner" : "basic";
-          const el = merged.entryLayout as string;
-          merged.entryLayout =
-            el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
-          const hl = merged.headerLayout as string;
-          merged.headerLayout =
-            hl === "stackCenter" ||
-            hl === "centerRow2" ||
-            hl === "splitRight" ||
-            hl === "nameThenInline" ||
-            hl === "stackLeft"
-              ? hl
-              : hl === "split"
-                ? "splitRight"
-                : hl === "centered"
-                  ? "stackCenter"
-                  : "stackCenter";
-          const tlo = merged.entryListingTitleOrder as string;
-          merged.entryListingTitleOrder = tlo === "subtitleFirst" ? "subtitleFirst" : "titleFirst";
-          const mlo = merged.entryListingMetaOrder as string;
-          merged.entryListingMetaOrder = mlo === "locationFirst" ? "locationFirst" : "dateFirst";
-          merged.lineHeight = clamp(Number(merged.lineHeight) || defaultCustomize.lineHeight, 1.1, 2);
-          merged.sectionGapPx = clamp(
-            Number.isFinite(Number(merged.sectionGapPx)) ? Number(merged.sectionGapPx) : defaultCustomize.sectionGapPx,
-            1,
-            20
-          );
-          merged.coverLetterShowContactIcons =
-            typeof merged.coverLetterShowContactIcons === "boolean"
-              ? merged.coverLetterShowContactIcons
-              : defaultCustomize.coverLetterShowContactIcons;
-          setCustomize(merged);
-        }
+        if (parsed?.customize) setCustomize(mergeStoredResumeCustomize(parsed.customize));
       }
     } catch {
       // ignore
@@ -781,8 +787,121 @@ export default function ResumeBuilder() {
     }
   }, [data, customize, loaded]);
 
+  const { user, loading: authLoading } = useAuth();
+  const [resumeRows, setResumeRows] = useState<{ id: string; name: string }[]>([]);
+  const [activeResumeId, setActiveResumeId] = useState<string | null>(null);
+  const [cloudReady, setCloudReady] = useState(false);
+  const skipCloudSave = useRef(false);
+  const creatingCloudResume = useRef(false);
+
+  function readLocalBundleRaw(): Record<string, unknown> {
+    try {
+      const raw = window.localStorage.getItem(RESUME_BUILDER_STORAGE_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  /** Load list + active resume from Supabase when signed in. */
+  useEffect(() => {
+    if (!loaded || authLoading) return;
+    if (!user) {
+      setResumeRows([]);
+      setActiveResumeId(null);
+      setCloudReady(true);
+      return;
+    }
+    let cancelled = false;
+    setCloudReady(false);
+    (async () => {
+      try {
+        const rows = await resumeCloud.listResumes();
+        if (cancelled) return;
+        setResumeRows(rows.map((r) => ({ id: r.id, name: r.name })));
+        const savedId = window.localStorage.getItem(ACTIVE_RESUME_ID_KEY);
+        const pick =
+          (savedId ? rows.find((r) => r.id === savedId) : undefined) ?? rows[0] ?? null;
+        if (pick) {
+          skipCloudSave.current = true;
+          setActiveResumeId(pick.id);
+          window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, pick.id);
+          const row = rows.find((r) => r.id === pick.id);
+          if (row) {
+            const p = row.payload;
+            if (p.data) setData({ ...emptyResume, ...p.data });
+            if (p.customize) setCustomize(mergeStoredResumeCustomize(p.customize));
+            const bundle = {
+              ...readLocalBundleRaw(),
+              ...p,
+              data: p.data ?? readLocalBundleRaw().data,
+              customize: p.customize ?? readLocalBundleRaw().customize,
+              updatedAt: Date.now(),
+            };
+            window.localStorage.setItem(RESUME_BUILDER_STORAGE_KEY, JSON.stringify(bundle));
+          }
+          requestAnimationFrame(() => {
+            skipCloudSave.current = false;
+          });
+        } else {
+          setActiveResumeId(null);
+        }
+      } catch (e) {
+        console.warn("Cloud resume load failed", e);
+      } finally {
+        if (!cancelled) setCloudReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, user, authLoading]);
+
+  /** Debounced save to Supabase when signed in. */
+  useEffect(() => {
+    if (!loaded || !user || !cloudReady || authLoading) return;
+    if (skipCloudSave.current) return;
+    const t = window.setTimeout(async () => {
+      try {
+        const prev = readLocalBundleRaw();
+        const payload: resumeCloud.ResumeCloudPayload = {
+          ...(prev as resumeCloud.ResumeCloudPayload),
+          data,
+          customize,
+          updatedAt: Date.now(),
+        };
+        if (activeResumeId) {
+          await resumeCloud.updateResume(activeResumeId, payload);
+        } else {
+          if (creatingCloudResume.current) return;
+          creatingCloudResume.current = true;
+          try {
+            const row = await resumeCloud.createResume(
+              `Resume No.${resumeRows.length + 1}`,
+              payload
+            );
+            setActiveResumeId(row.id);
+            window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+            setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
+          } finally {
+            creatingCloudResume.current = false;
+          }
+        }
+      } catch (e) {
+        console.warn("Cloud resume save failed", e);
+      }
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [data, customize, loaded, user, cloudReady, authLoading, activeResumeId, resumeRows.length]);
+
+  const resumeToolbarLabel = useMemo(() => {
+    if (!user) return "Resumes";
+    const hit = resumeRows.find((r) => r.id === activeResumeId);
+    return hit?.name ?? "My resumes";
+  }, [user, resumeRows, activeResumeId]);
+
   /** --- top bar state --- */
-  const [resumeName] = useState("Resumes");
   const [resumeMenuOpen, setResumeMenuOpen] = useState(false);
 
   const previewRef = useRef<OverleafTabsPreviewHandle>(null);
@@ -1611,7 +1730,7 @@ export default function ResumeBuilder() {
               className="flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-sm text-white/90 hover:bg-white/15"
               type="button"
             >
-              <span className="max-w-[160px] truncate">{resumeName}</span>
+              <span className="max-w-[160px] truncate">{resumeToolbarLabel}</span>
               <Chevron open={resumeMenuOpen} />
             </button>
 
@@ -1632,12 +1751,93 @@ export default function ResumeBuilder() {
               <div className="absolute right-0 top-[52px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] text-white shadow-2xl">
                 <div className="px-4 py-3 text-lg font-semibold text-white">My Resumes</div>
                 <div className="border-t border-white/10" />
-                <div className="px-4 py-3 text-white/80">Resume No.1</div>
+                <div className="max-h-[200px] overflow-y-auto">
+                  {user ? (
+                    resumeRows.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-white/50">No saved resumes yet.</div>
+                    ) : (
+                      resumeRows.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className={`block w-full px-4 py-3 text-left text-sm hover:bg-white/5 ${
+                            r.id === activeResumeId ? "bg-white/10 text-white" : "text-white/80"
+                          }`}
+                          onClick={async () => {
+                            setResumeMenuOpen(false);
+                            try {
+                              const row = await resumeCloud.getResume(r.id);
+                              if (!row) return;
+                              skipCloudSave.current = true;
+                              setActiveResumeId(row.id);
+                              window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+                              const p = row.payload;
+                              if (p.data) setData({ ...emptyResume, ...p.data });
+                              if (p.customize) setCustomize(mergeStoredResumeCustomize(p.customize));
+                              const bundle = {
+                                ...readLocalBundleRaw(),
+                                ...p,
+                                data: p.data,
+                                customize: p.customize,
+                                updatedAt: Date.now(),
+                              };
+                              window.localStorage.setItem(
+                                RESUME_BUILDER_STORAGE_KEY,
+                                JSON.stringify(bundle)
+                              );
+                              requestAnimationFrame(() => {
+                                skipCloudSave.current = false;
+                              });
+                            } catch (e) {
+                              console.warn(e);
+                            }
+                          }}
+                        >
+                          {r.name}
+                        </button>
+                      ))
+                    )
+                  ) : (
+                    <div className="px-4 py-3 text-sm text-white/50">
+                      Sign in to sync resumes to the cloud.
+                    </div>
+                  )}
+                </div>
                 <div className="border-t border-white/10" />
                 <div className="p-4">
                   <button
                     className="w-full rounded-xl bg-teal-500 px-4 py-2 font-semibold text-white hover:bg-teal-400"
-                    onClick={() => setResumeMenuOpen(false)}
+                    onClick={async () => {
+                      setResumeMenuOpen(false);
+                      if (!user) return;
+                      try {
+                        skipCloudSave.current = true;
+                        const payload: resumeCloud.ResumeCloudPayload = {
+                          data: emptyResume,
+                          customize: defaultCustomize,
+                          updatedAt: Date.now(),
+                        };
+                        const row = await resumeCloud.createResume(
+                          `Resume No.${resumeRows.length + 1}`,
+                          payload
+                        );
+                        setData(emptyResume);
+                        setCustomize(defaultCustomize);
+                        setActiveResumeId(row.id);
+                        window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+                        window.localStorage.setItem(
+                          RESUME_BUILDER_STORAGE_KEY,
+                          JSON.stringify({ ...payload })
+                        );
+                        setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
+                        requestAnimationFrame(() => {
+                          skipCloudSave.current = false;
+                        });
+                      } catch (e) {
+                        console.warn(e);
+                        skipCloudSave.current = false;
+                      }
+                    }}
                     type="button"
                   >
                     + Add Resume
