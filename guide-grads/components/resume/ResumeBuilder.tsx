@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
 import RichTextArea from "./RichTextArea";
+import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
 
 /** ---------------- Types ---------------- */
 type Experience = {
@@ -114,7 +114,8 @@ export type HeaderLayout =
   | "stackCenter" /** All centered: name, location, then contacts */
   | "centerRow2" /** Name centered; location + contacts on one row below */
   | "splitRight" /** Name & location left; contacts stacked right */
-  | "nameThenInline"; /** Name on first line; location + contacts inline on second */
+  | "nameThenInline" /** Name on first line; location + contacts inline on second */
+  | "stackLeft"; /** Name, location, contacts — all left-aligned in a vertical stack */
 
 /** Which resume elements use the chosen accent color (Customize → Colors). */
 export type AccentApply = {
@@ -169,12 +170,16 @@ export type ResumeCustomize = {
   entryListingTitleOrder: EntryListingTitleOrder;
   entryListingMetaOrder: EntryListingMetaOrder;
   sectionOrder: string[];
+
+  /** Cover letter preview: show icons beside profile contact lines (location, phone, links, etc.). */
+  coverLetterShowContactIcons?: boolean;
 };
 
-const STORAGE_KEY = "guidegrads.resume.builder.v2";
+/** Shared with cover letter page — same localStorage blob. */
+export const RESUME_BUILDER_STORAGE_KEY = "guidegrads.resume.builder.v2";
 
 /** ---------------- Defaults ---------------- */
-const emptyResume: ResumeData = {
+export const emptyResume: ResumeData = {
   name: "",
   location: "",
   email: "",
@@ -194,7 +199,7 @@ const emptyResume: ResumeData = {
   custom: [],
 };
 
-const defaultAccentApply: AccentApply = {
+export const defaultAccentApply: AccentApply = {
   name: true,
   headings: true,
   headingsLine: true,
@@ -207,7 +212,7 @@ const defaultAccentApply: AccentApply = {
   linkIcons: false,
 };
 
-const defaultCustomize: ResumeCustomize = {
+export const defaultCustomize: ResumeCustomize = {
   accentColor: "#0f172a",
   accentApply: defaultAccentApply,
   headerColorMode: "basic",
@@ -234,6 +239,8 @@ const defaultCustomize: ResumeCustomize = {
   entryListingTitleOrder: "titleFirst",
   entryListingMetaOrder: "dateFirst",
   sectionOrder: ["basics", "skills", "experience", "education", "projects", "achievements", "custom"],
+
+  coverLetterShowContactIcons: false,
 };
 
 const DEFAULT_SECTION_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
@@ -686,14 +693,19 @@ export default function ResumeBuilder() {
   /** IMPORTANT: do NOT read localStorage during render (prevents hydration mismatch) */
   const [data, setData] = useState<ResumeData>(emptyResume);
   const [customize, setCustomize] = useState<ResumeCustomize>(defaultCustomize);
+  const [activeTab, setActiveTab] = useState<TabKey>("content");
 
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const raw = window.localStorage.getItem(RESUME_BUILDER_STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as { data?: ResumeData; customize?: ResumeCustomize; updatedAt?: number };
+        const parsed = JSON.parse(raw) as {
+          data?: ResumeData;
+          customize?: ResumeCustomize;
+          updatedAt?: number;
+        };
         if (parsed?.data) setData({ ...emptyResume, ...parsed.data });
         if (parsed?.customize) {
           const merged = { ...defaultCustomize, ...parsed.customize };
@@ -710,7 +722,11 @@ export default function ResumeBuilder() {
             el === "l1" || el === "l2" || el === "l3" || el === "l4" || el === "l5" ? el : "l1";
           const hl = merged.headerLayout as string;
           merged.headerLayout =
-            hl === "stackCenter" || hl === "centerRow2" || hl === "splitRight" || hl === "nameThenInline"
+            hl === "stackCenter" ||
+            hl === "centerRow2" ||
+            hl === "splitRight" ||
+            hl === "nameThenInline" ||
+            hl === "stackLeft"
               ? hl
               : hl === "split"
                 ? "splitRight"
@@ -727,6 +743,10 @@ export default function ResumeBuilder() {
             1,
             20
           );
+          merged.coverLetterShowContactIcons =
+            typeof merged.coverLetterShowContactIcons === "boolean"
+              ? merged.coverLetterShowContactIcons
+              : defaultCustomize.coverLetterShowContactIcons;
           setCustomize(merged);
         }
       }
@@ -739,13 +759,30 @@ export default function ResumeBuilder() {
 
   useEffect(() => {
     if (!loaded) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ data, customize, updatedAt: Date.now() }));
+    try {
+      const raw = window.localStorage.getItem(RESUME_BUILDER_STORAGE_KEY);
+      const prev = raw
+        ? (JSON.parse(raw) as Record<string, unknown>)
+        : ({} as Record<string, unknown>);
+      window.localStorage.setItem(
+        RESUME_BUILDER_STORAGE_KEY,
+        JSON.stringify({
+          ...prev,
+          data,
+          customize,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {
+      window.localStorage.setItem(
+        RESUME_BUILDER_STORAGE_KEY,
+        JSON.stringify({ data, customize, updatedAt: Date.now() })
+      );
+    }
   }, [data, customize, loaded]);
 
-
   /** --- top bar state --- */
-  const [activeTab, setActiveTab] = useState<TabKey>("content");
-  const [resumeName] = useState("Damber");
+  const [resumeName] = useState("Resumes");
   const [resumeMenuOpen, setResumeMenuOpen] = useState(false);
 
   const previewRef = useRef<OverleafTabsPreviewHandle>(null);
@@ -1352,7 +1389,7 @@ export default function ResumeBuilder() {
                         <TextInput label="Start" value={e.start} onChange={(v) => updateEducation(e.id, { start: v })} />
                         <TextInput label="End" value={e.end} onChange={(v) => updateEducation(e.id, { end: v })} />
                         <div className="sm:col-span-2">
-                          <RichTextArea label="Coursework (optional)" value={e.coursework ?? ""} onChange={(v) => updateEducation(e.id, { coursework: v })} />
+                          <RichTextArea label="Relevant courses (optional)" value={e.coursework ?? ""} onChange={(v) => updateEducation(e.id, { coursework: v })} />
                         </div>
                       </div>
                     </div>
@@ -1592,14 +1629,14 @@ export default function ResumeBuilder() {
             </button>
 
             {resumeMenuOpen ? (
-              <div className="absolute right-0 top-[52px] w-[340px] overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl">
-                <div className="px-4 py-3 text-lg font-semibold">My Resumes</div>
-                <div className="border-t border-slate-200" />
-                <div className="px-4 py-3 text-slate-700">Resume No.1</div>
-                <div className="border-t border-slate-200" />
+              <div className="absolute right-0 top-[52px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] text-white shadow-2xl">
+                <div className="px-4 py-3 text-lg font-semibold text-white">My Resumes</div>
+                <div className="border-t border-white/10" />
+                <div className="px-4 py-3 text-white/80">Resume No.1</div>
+                <div className="border-t border-white/10" />
                 <div className="p-4">
                   <button
-                    className="w-full rounded-xl bg-pink-600 px-4 py-2 font-semibold text-white hover:bg-pink-500"
+                    className="w-full rounded-xl bg-teal-500 px-4 py-2 font-semibold text-white hover:bg-teal-400"
                     onClick={() => setResumeMenuOpen(false)}
                     type="button"
                   >
@@ -1790,7 +1827,7 @@ export default function ResumeBuilder() {
                 {/* Profile header (name + contacts) — separate from section heading styles below */}
                 <div className="rounded-3xl bg-white/5 p-5">
                   <div className="text-3xl font-extrabold">Profile header</div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <button
                       type="button"
                       onClick={() => setCustomizePatch({ headerLayout: "stackCenter" })}
@@ -1862,6 +1899,24 @@ export default function ResumeBuilder() {
                         <div className="flex flex-wrap items-center gap-0.5">
                           <div className="w-6 h-1 rounded-sm bg-white/35" />
                           <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                          <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomizePatch({ headerLayout: "stackLeft" })}
+                      className={[
+                        "rounded-xl border p-3 flex items-center justify-center transition-colors min-h-[64px]",
+                        customize.headerLayout === "stackLeft" ? "border-teal-400 bg-teal-500/20" : "border-white/20 bg-white/5 hover:bg-white/10",
+                      ].join(" ")}
+                      aria-label="All left: name, address, contacts stacked"
+                    >
+                      <div className="flex flex-col items-start gap-0.5 w-full px-0.5">
+                        <div className="w-10 h-2 rounded-sm bg-white/60" />
+                        <div className="w-6 h-1 rounded-sm bg-white/35" />
+                        <div className="flex gap-0.5 justify-start">
                           <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
                           <div className="w-1.5 h-1.5 rounded-full border border-white/40" />
                         </div>

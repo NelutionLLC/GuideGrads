@@ -9,10 +9,9 @@ export default function TopNav() {
         </Link>
 
         <nav className="hidden items-center gap-8 text-sm text-white/80 md:flex">
-          <Link href="/resume" className="hover:text-white">Builders</Link>
           <Link href="/dashboard" className="hover:text-white">Dashboard</Link>
           <Link href="/resume" className="hover:text-white">Resumes</Link>
-          <Link href="/applications" className="hover:text-white">Cover Letters</Link>
+          <Link href="/cover-letters" className="hover:text-white">Cover Letters</Link>
           <Link href="/jobs" className="hover:text-white">Jobs</Link>
           <Link href="/immigration" className="hover:text-white">Immigration</Link>
         </nav>

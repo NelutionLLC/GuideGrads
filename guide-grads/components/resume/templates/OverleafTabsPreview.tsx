@@ -45,6 +45,7 @@ const mmToPx = (mm: number) => (mm * 96) / 25.4;
 const LETTER_W = 8.5 * 96; // 816
 const LETTER_H = 11 * 96; // 1056
 
+
 function injectBulletStyles(html: string): string {
   return html
     // Strip <a> tags but keep their text content (no hyperlinks in resume body)
@@ -53,12 +54,489 @@ function injectBulletStyles(html: string): string {
     .replace(/<ol>/g, '<ol style="list-style:none;padding-left:0;margin:0">')
     .replace(/<li>/g, '<li style="padding-left:0.9em;text-indent:-0.9em;margin:0">')
     .replace(/<li /g, '<li style="padding-left:0.9em;text-indent:-0.9em;margin:0" ')
-    // only inline <p> directly inside <li>, not all paragraphs
-    .replace(/(<li[^>]*>)<p>/g, '$1<p style="display:inline;margin:0">')
+    // Bare <p> after <li>: keep block layout so text-align / justify from the editor apply
+    .replace(/(<li[^>]*>)<p>/g, '$1<p style="margin:0">')
     // hanging indent for plain <p> bullet paragraphs (user typed • directly)
     .replace(/<p>•/g, '<p style="padding-left:0.9em;text-indent:-0.9em;margin:0">•');
 }
 
+const TEXT_ALIGN_IN_STYLE_RE = /\s*text-align\s*:\s*[^;]+;?/gi;
+const LINE_HEIGHT_IN_STYLE_RE = /\s*line-height\s*:\s*[^;]+;?/gi;
+
+function sanitizeInlineStyleAttrValue(styles: string): string {
+  return styles
+    .replace(TEXT_ALIGN_IN_STYLE_RE, "")
+    .replace(LINE_HEIGHT_IN_STYLE_RE, "")
+    .replace(/;;+/g, ";")
+    .replace(/^;+|;+$/g, "")
+    .trim();
+}
+
+/** Remove text-align / line-height from inline styles (preview controls both via CSS + pagination). */
+function sanitizeRichHtmlInlineStyles(html: string): string {
+  return html
+    .replace(/\sstyle="([^"]*)"/gi, (_m, content: string) => {
+      const cleaned = sanitizeInlineStyleAttrValue(content);
+      return cleaned ? ` style="${cleaned}"` : "";
+    })
+    .replace(/\sstyle='([^']*)'/gi, (_m, content: string) => {
+      const cleaned = sanitizeInlineStyleAttrValue(content);
+      return cleaned ? ` style='${cleaned}'` : "";
+    });
+}
+
+function extractFirstTextAlign(html: string): React.CSSProperties["textAlign"] | undefined {
+  const m = html.match(/\btext-align\s*:\s*(left|center|right|justify)\b/i);
+  if (!m) return undefined;
+  return m[1].toLowerCase() as React.CSSProperties["textAlign"];
+}
+
+/**
+ * TipTap often sets text-align only on the active paragraph; hoist the first alignment found
+ * to the preview container so every bullet/line in that field matches.
+ */
+function prepareRichPreviewHtml(raw: string): { html: string; textAlign?: React.CSSProperties["textAlign"] } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { html: "" };
+  const textAlign = extractFirstTextAlign(trimmed);
+  const stripped = sanitizeRichHtmlInlineStyles(trimmed);
+  return { html: injectBulletStyles(stripped), textAlign };
+}
+
+/**
+ * Text column: `viewportH` equals full contentH — no insets needed.
+ */
+function computeLineSnappedViewport(contentH: number, lineStepPx: number) {
+  const step = Math.max(1, Math.round(lineStepPx));
+  return {
+    viewportH: Math.max(0, contentH),
+    padTop: 0,
+    padBottom: 0,
+    lineSnapPx: step,
+  };
+}
+
+/** One horizontal text band (top/bottom relative to the measurement strip’s top border). */
+type LineBand = { t: number; b: number };
+
+/** Keep page end `end` from landing inside a painted line (same rules as computePageWindowsFromBands). */
+function snapEndToLineBands(start: number, end: number, bands: LineBand[], EPS: number): number {
+  let out = end;
+  for (const { t, b } of bands) {
+    if (b <= start + EPS) continue;
+    if (t >= out - EPS) continue;
+    if (t > start + EPS && t + EPS < out && out < b - EPS) {
+      out = Math.min(out, t);
+    }
+  }
+  for (const { t, b } of bands) {
+    if (t > start + EPS && out > t + EPS && out < b - EPS) {
+      out = Math.min(out, t);
+    }
+  }
+  return out;
+}
+
+/**
+ * If a page starts mid-line (rounding / vh splits), move the break up to the line top when that still
+ * leaves content on the previous page — avoids a sliver of the previous line above the first real line.
+ */
+function snapPageStartsToLineTops(
+  windows: PageContentWindow[],
+  bands: LineBand[],
+  th: number,
+  EPS: number
+): PageContentWindow[] {
+  if (windows.length <= 1 || !bands.length) return windows;
+  const out = windows.map((w) => ({ start: w.start, contentEnd: w.contentEnd }));
+  for (let i = 1; i < out.length; i++) {
+    let s = out[i].start;
+    for (const { t, b } of bands) {
+      if (s > t + EPS && s < b - EPS) {
+        if (t > out[i - 1].start + EPS) {
+          s = t;
+        }
+        break;
+      }
+    }
+    const si = Math.round(s);
+    out[i].start = si;
+    out[i - 1].contentEnd = si;
+  }
+  out[out.length - 1].contentEnd = th;
+  const filtered = out.filter((w) => w.contentEnd > w.start + 0.5);
+  if (!filtered.length) return windows;
+  filtered[0].start = 0;
+  for (let i = 1; i < filtered.length; i++) {
+    filtered[i].start = filtered[i - 1].contentEnd;
+  }
+  filtered[filtered.length - 1].contentEnd = th;
+  return filtered;
+}
+
+/**
+ * Merge only fragments of the *same* painted line (adjacent spans). Do not merge stacked lines:
+ * touching line boxes (t ≈ prev.b) must stay separate or whole blocks jump to the next page.
+ */
+function mergeSameLineFragments(raw: LineBand[]): LineBand[] {
+  if (!raw.length) return [];
+  const sorted = [...raw].sort((a, b) => a.t - b.t || a.b - b.b);
+  const out: LineBand[] = [];
+  const Y_TOL = 3.5;
+  for (const L of sorted) {
+    if (L.b - L.t < 1) continue;
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(L.t - prev.t) < Y_TOL && Math.abs(L.b - prev.b) < Y_TOL) {
+      prev.t = Math.min(prev.t, L.t);
+      prev.b = Math.max(prev.b, L.b);
+    } else {
+      out.push({ t: L.t, b: L.b });
+    }
+  }
+  return out;
+}
+
+/**
+ * Drop container-sized rects (`li`, rich-text wrappers) when *any* finer line band lies inside —
+ * one real line is enough to prove the tall rect is redundant for breaks.
+ */
+function dropListItemContainerBands(bands: LineBand[], lineSnapPx: number): LineBand[] {
+  const step = Math.max(8, Math.round(lineSnapPx));
+  const tallTh = step * 1.55;
+  return bands.filter((T) => {
+    const th = T.b - T.t;
+    if (th < tallTh) return true;
+    const finerInside = bands.filter(
+      (L) =>
+        L !== T &&
+        L.b - L.t < th * 0.82 &&
+        L.t >= T.t - 1 &&
+        L.b <= T.b + 6
+    );
+    return finerInside.length < 1;
+  });
+}
+
+/**
+ * Only subdivide bands taller than one viewport — otherwise fake "lines" split skills / rich blocks mid-paragraph.
+ */
+function subdivideBandsToLineSteps(bands: LineBand[], lineSnapPx: number, viewportH: number): LineBand[] {
+  const step = Math.max(8, Math.round(lineSnapPx));
+  const threshold = Math.max(40, step * 2.05);
+  const vh = Math.max(1, viewportH);
+  const EPS = 0.35;
+  const out: LineBand[] = [];
+  for (const L of bands) {
+    const h = L.b - L.t;
+    if (h <= threshold || h <= vh + EPS) {
+      out.push(L);
+      continue;
+    }
+    let y = L.t;
+    while (y < L.b - 0.05) {
+      const nb = Math.min(y + step, L.b);
+      if (nb - y >= 1.2) out.push({ t: y, b: nb });
+      y = nb;
+    }
+  }
+  return out.sort((a, b) => a.t - b.t || a.b - b.b);
+}
+
+/**
+ * Per-line geometry: TreeWalker + Range (primary), plus `p` getClientRects (per wrapped line).
+ * Do not call `li.getClientRects()` — it collapses multi-line bullets into one band.
+ */
+function collectLineBands(
+  flowRoot: HTMLElement,
+  stripEl: HTMLElement,
+  viewportH: number,
+  lineSnapPx: number
+): LineBand[] {
+  const stripRect = stripEl.getBoundingClientRect();
+  const raw: LineBand[] = [];
+  const maxH = Math.max(24, viewportH);
+
+  const pushRects = (rects: DOMRectList | DOMRect[]) => {
+    const len = rects.length;
+    for (let i = 0; i < len; i++) {
+      const r = rects[i];
+      if (r.height < 2 || r.width < 3) continue;
+      if (r.height > maxH) continue;
+      const t = r.top - stripRect.top + stripEl.scrollTop;
+      const b = r.bottom - stripRect.top + stripEl.scrollTop;
+      raw.push({ t, b });
+    }
+  };
+
+  const tw = document.createTreeWalker(flowRoot, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return /\S/.test(node.textContent ?? "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  let n: Node | null;
+  while ((n = tw.nextNode())) {
+    const range = document.createRange();
+    try {
+      range.selectNodeContents(n);
+      pushRects(range.getClientRects());
+    } finally {
+      range.detach?.();
+    }
+  }
+
+  flowRoot.querySelectorAll<HTMLElement>(".resume-preview p").forEach((el) => {
+    pushRects(el.getClientRects());
+  });
+
+  flowRoot.querySelectorAll<HTMLElement>("div.inline-flex").forEach((el) => {
+    const rects = el.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (r.height < 2 || r.width < 3) continue;
+      if (r.height > maxH) continue;
+      pushRects([r]);
+    }
+  });
+
+  /* Skills / labels + rich text: often `inline-block` with multi-line body (one tall rect otherwise). */
+  flowRoot.querySelectorAll<HTMLElement>(".resume-preview div.inline-block").forEach((el) => {
+    const rects = el.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (r.height < 2 || r.width < 3) continue;
+      if (r.height > maxH) continue;
+      pushRects([r]);
+    }
+  });
+
+  const merged = mergeSameLineFragments(raw);
+  const dropped = dropListItemContainerBands(merged, lineSnapPx);
+  return subdivideBandsToLineSteps(dropped, lineSnapPx, viewportH);
+}
+
+/** One page slice: show content [start, contentEnd) inside a fixed-height viewport (clip excess bottom). */
+type PageContentWindow = { start: number; contentEnd: number };
+
+/**
+ * Contiguous, non-overlapping vertical bands so we never slice a line.
+ * Each page uses a fixed `viewportH` clip (equals full `contentH`); short pages get bottom clip-path only.
+ * Next page starts at previous `contentEnd` so there is no overlap with the prior page.
+ */
+function computePageWindowsFromBands(totalH: number, viewportH: number, bands: LineBand[]): PageContentWindow[] {
+  const EPS = 0.35;
+  const vh = Math.max(1, viewportH);
+  const th = Math.max(0, totalH);
+  const out: PageContentWindow[] = [];
+  if (th <= EPS) return [{ start: 0, contentEnd: 0 }];
+
+  let start = 0;
+  let guard = 0;
+  while (start < th - EPS && guard++ < 600) {
+    const limit = Math.min(start + vh, th);
+    let end = limit;
+
+    for (const { t, b } of bands) {
+      if (b <= start + EPS) continue;
+      if (t >= end - EPS) continue;
+      /** Band top must be strictly after `start`, else a full-column rect [0, th) makes `end` snap to 0 and duplicates content across pages. */
+      if (t > start + EPS && t + EPS < end && end < b - EPS) {
+        end = Math.min(end, t);
+      }
+    }
+
+    for (const { t, b } of bands) {
+      if (t > start + EPS && end > t + EPS && end < b - EPS) {
+        end = Math.min(end, t);
+      }
+    }
+
+    if (end <= start + EPS) {
+      let nextTop = th + 1;
+      for (const { t } of bands) {
+        if (t > start + EPS) nextTop = Math.min(nextTop, t);
+      }
+      if (nextTop <= th) {
+        end = Math.min(nextTop, start + vh, th);
+      } else {
+        end = Math.min(start + vh, th);
+      }
+    }
+
+    const a = Math.floor(start);
+    const b = Math.max(a + 1, Math.ceil(end));
+    out.push({ start: a, contentEnd: Math.min(b, Math.ceil(th)) });
+    if (end >= th - EPS) break;
+    start = end;
+  }
+
+  const raw = out.length ? out : [{ start: 0, contentEnd: Math.max(1, Math.ceil(th)) }];
+  return normalizePageWindows(raw, th, viewportH, bands);
+}
+
+/**
+ * Round, remove gaps between windows, split any slice taller than `viewportH`, and cover `[0, totalH)`
+ * without extending a single page past `viewportH` (that caused clipping to hide content → blank/extra pages).
+ * `bands` snaps blind `vh` splits so we do not cut through a line (fixes clipped half-lines at page tops).
+ */
+function normalizePageWindows(
+  raw: PageContentWindow[],
+  totalH: number,
+  viewportH: number,
+  bands: LineBand[]
+): PageContentWindow[] {
+  const EPS = 0.35;
+  const th = Math.max(0, Math.round(totalH));
+  const vh = Math.max(1, Math.round(viewportH));
+  if (th <= 0) return [{ start: 0, contentEnd: 0 }];
+  if (!raw.length) return [{ start: 0, contentEnd: th }];
+
+  let merged = raw
+    .map((w) => ({
+      start: Math.max(0, Math.floor(Number(w.start) || 0)),
+      contentEnd: Math.ceil(Number(w.contentEnd) || 0),
+    }))
+    .map((w) => ({ start: w.start, contentEnd: Math.min(w.contentEnd, th) }))
+    .filter((w) => w.contentEnd > w.start)
+    .sort((a, b) => a.start - b.start);
+
+  if (!merged.length) return [{ start: 0, contentEnd: th }];
+
+  const coalesced: PageContentWindow[] = [];
+  for (const w of merged) {
+    if (!coalesced.length) {
+      coalesced.push({ ...w });
+      continue;
+    }
+    const p = coalesced[coalesced.length - 1];
+    if (w.start < p.contentEnd) {
+      p.contentEnd = Math.max(p.contentEnd, w.contentEnd);
+    } else {
+      coalesced.push({ ...w });
+    }
+  }
+  merged = coalesced;
+
+  if (merged[0].start > 0) merged[0].start = 0;
+
+  for (let i = 1; i < merged.length; i++) {
+    merged[i].start = merged[i - 1].contentEnd;
+  }
+
+  const split: PageContentWindow[] = [];
+  for (const w of merged) {
+    let s = w.start;
+    const end = w.contentEnd;
+    while (s < end - 1e-6) {
+      let e = Math.min(s + vh, end);
+      if (bands.length) {
+        e = snapEndToLineBands(s, e, bands, EPS);
+        if (e <= s + EPS) e = Math.min(s + vh, end);
+      }
+      if (e <= s + EPS) {
+        e = Math.min(s + 1, end);
+      }
+      if (e <= s + 1e-6) break;
+      const a = Math.floor(s);
+      const b = Math.max(a + 1, Math.ceil(Math.min(e, end)));
+      split.push({ start: a, contentEnd: b });
+      s = e;
+    }
+  }
+
+  let last = split[split.length - 1];
+  while (last && last.contentEnd < th - EPS) {
+    const s = last.contentEnd;
+    let e = Math.min(s + vh, th);
+    if (bands.length) {
+      e = snapEndToLineBands(s, e, bands, EPS);
+      if (e <= s + EPS) e = Math.min(s + vh, th);
+    }
+    if (e <= s + EPS) {
+      e = Math.min(s + 1, th);
+    }
+    if (e <= s + 1e-6) break;
+    const a = Math.floor(s);
+    const b = Math.max(a + 1, Math.ceil(Math.min(e, th)));
+    split.push({ start: a, contentEnd: b });
+    last = split[split.length - 1];
+  }
+
+  /** Zero-height windows (from rounding) still render a full Letter page with clipH=0 → blank sheet between real pages. */
+  const MIN_PAGE_H = 2;
+  let compact = split.filter((w) => w.contentEnd - w.start >= MIN_PAGE_H);
+  if (!compact.length) return [{ start: 0, contentEnd: th }];
+  compact[0].start = 0;
+  for (let i = 1; i < compact.length; i++) {
+    compact[i].start = compact[i - 1].contentEnd;
+  }
+  compact[compact.length - 1].contentEnd = th;
+
+  /** Closing gaps can merge two windows into one taller than `vh` — clip only shows `vh` px so the rest vanishes until the next page (blank middle sheet). */
+  if (compact.some((w) => w.contentEnd - w.start > vh + 2)) {
+    const resplit: PageContentWindow[] = [];
+    for (const w of compact) {
+      let s = w.start;
+      const end = w.contentEnd;
+      while (s < end - 1e-6) {
+        let e = Math.min(s + vh, end);
+        if (bands.length) {
+          e = snapEndToLineBands(s, e, bands, EPS);
+          if (e <= s + EPS) e = Math.min(s + vh, end);
+        }
+        if (e <= s + EPS) e = Math.min(s + 1, end);
+        if (e <= s + 1e-6) break;
+        const a = Math.floor(s);
+        const b = Math.max(a + 1, Math.ceil(Math.min(e, end)));
+        resplit.push({ start: a, contentEnd: b });
+        s = e;
+      }
+    }
+    if (resplit.length) {
+      resplit[resplit.length - 1].contentEnd = th;
+      compact = resplit;
+    }
+  }
+
+  const MIN_TAIL_PX = 8;
+  while (compact.length > 1 && compact[compact.length - 1].contentEnd - compact[compact.length - 1].start < MIN_TAIL_PX) {
+    const tail = compact.pop()!;
+    const prev = compact[compact.length - 1];
+    if (th - prev.start <= vh + 1) {
+      prev.contentEnd = th;
+    } else {
+      compact.push(tail);
+      break;
+    }
+  }
+
+  let finalOut = compact;
+  if (bands.length && compact.length > 1) {
+    const snapped = snapPageStartsToLineTops(compact, bands, th, EPS);
+    if (snapped.length) finalOut = snapped;
+  }
+
+  return finalOut.length ? finalOut : [{ start: 0, contentEnd: th }];
+}
+
+/** Resolved line box height in px — prefer column root (matches inherited rhythm), then body nodes. */
+function measureLineSnapFromStrip(strip: HTMLElement, fallbackStepPx: number): number {
+  const root = strip.querySelector<HTMLElement>(".resume-preview");
+  if (root) {
+    const rootLh = parseFloat(window.getComputedStyle(root).lineHeight);
+    if (Number.isFinite(rootLh) && rootLh > 0) {
+      return Math.max(1, Math.round(rootLh));
+    }
+  }
+  const nodes = strip.querySelectorAll<HTMLElement>(".resume-preview p, .resume-preview li");
+  let maxLh = 0;
+  const limit = Math.min(nodes.length, 80);
+  for (let i = 0; i < limit; i++) {
+    const lh = parseFloat(window.getComputedStyle(nodes[i]).lineHeight);
+    if (Number.isFinite(lh) && lh > 0) maxLh = Math.max(maxLh, lh);
+  }
+  if (maxLh <= 0) return Math.max(1, Math.round(fallbackStepPx));
+  return Math.max(1, Math.round(maxLh));
+}
 
 function formatRange(start?: string, end?: string) {
   const s = (start ?? "").trim();
@@ -84,7 +562,14 @@ function hasAny(list?: string[]) {
 }
 
 function normalizeHeaderLayout(h: string | undefined): HeaderLayout {
-  if (h === "stackCenter" || h === "centerRow2" || h === "splitRight" || h === "nameThenInline") return h;
+  if (
+    h === "stackCenter" ||
+    h === "centerRow2" ||
+    h === "splitRight" ||
+    h === "nameThenInline" ||
+    h === "stackLeft"
+  )
+    return h;
   if (h === "split") return "splitRight";
   if (h === "centered") return "stackCenter";
   return "stackCenter";
@@ -93,7 +578,7 @@ function normalizeHeaderLayout(h: string | undefined): HeaderLayout {
 type Block = { key: string; node: React.ReactNode };
 
 /** Space between entry header row and bullets (work, projects, custom) — tighter than former mt-1. */
-const ENTRY_BODY_TOP_GAP_PX = 2;
+const ENTRY_BODY_TOP_GAP_PX = 8;
 /** Date/location column — compact line-height so a tall right column doesn’t inflate the row above bullets. */
 const ENTRY_META_LINE_HEIGHT = 1.12;
 /** Pulls the bullet block slightly closer to the title/meta row (same for all entry types). */
@@ -117,13 +602,61 @@ function marginTopBeforeBlock(
   entityGapPx: number
 ): number {
   if (!prevBlockKey) return 0;
-  if (blockKey.endsWith("-title")) {
+  if (blockKey.endsWith("-title") || blockKey === "skills-section") {
     return sectionMarginLevelToPx(sectionMarginLevel);
   }
   if (prevBlockKey.endsWith("-title")) {
     return 0;
   }
   return entityGapPx;
+}
+
+/** One vertical column of resume blocks; optional translateY for viewport pagination (line-level page breaks). */
+function ResumeFlowColumn({
+  blocks,
+  sectionMarginLevel,
+  entityGapPx,
+  translateY = 0,
+  style,
+  className,
+}: {
+  blocks: Block[];
+  sectionMarginLevel: number;
+  entityGapPx: number;
+  translateY?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
+  return (
+    <div
+      className={className}
+      style={{
+        width: "100%",
+        boxSizing: "border-box",
+        transform: translateY !== 0 ? `translate3d(0, -${translateY}px, 0)` : undefined,
+        backfaceVisibility: translateY !== 0 ? "hidden" : undefined,
+        ...style,
+      }}
+    >
+      {blocks.map((b, i) => (
+        <div
+          key={b.key}
+          data-resume-block={b.key}
+          style={{
+            marginTop: marginTopBeforeBlock(
+              b.key,
+              i > 0 ? blocks[i - 1].key : undefined,
+              sectionMarginLevel,
+              entityGapPx
+            ),
+            boxSizing: "border-box",
+          }}
+        >
+          {b.node}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Keeps header/contact SVGs aligned inside inline-flex rows (avoid inline + verticalAlign fighting items-center) */
@@ -402,17 +935,19 @@ function educationMetaTwoLines(
   );
 }
 
-/** Matches l4/l5 first column width + gap so bullets/coursework align with title text */
+/** l4 left meta; l5 outer columns (matched for symmetric layout) */
 const ENTRY_META_COL = "clamp(96px, 20%, 150px)";
 const ENTRY_COL_GAP_L4 = "24px";
-const ENTRY_COL_GAP_L5 = "22px";
+const ENTRY_COL_GAP_L5 = "17px";
 
 function getEntryBodyIndentStyle(customize: ResumeCustomize, hasLeftMetaColumn: boolean): React.CSSProperties {
   const L = normalizeEntryLayout(customize.entryLayout);
-  if (L === "l5" && hasLeftMetaColumn) {
+  if (L === "l5") {
     return {
       marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L5})`,
+      marginRight: `calc(${ENTRY_COL_GAP_L5} + ${ENTRY_META_COL})`,
       paddingLeft: "0.6em",
+      paddingRight: "0.6em",
     };
   }
   if (L === "l4" && hasLeftMetaColumn) {
@@ -426,8 +961,11 @@ function getEntryBodyIndentStyle(customize: ResumeCustomize, hasLeftMetaColumn: 
 
 function getCourseworkIndentStyle(customize: ResumeCustomize, hasLeftMetaColumn: boolean): React.CSSProperties {
   const L = normalizeEntryLayout(customize.entryLayout);
-  if (L === "l5" && hasLeftMetaColumn) {
-    return { marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L5})` };
+  if (L === "l5") {
+    return {
+      marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L5})`,
+      marginRight: `calc(${ENTRY_COL_GAP_L5} + ${ENTRY_META_COL})`,
+    };
   }
   if (L === "l4" && hasLeftMetaColumn) {
     return { marginLeft: `calc(${ENTRY_META_COL} + ${ENTRY_COL_GAP_L4})` };
@@ -776,7 +1314,7 @@ function renderEntryHeader(
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: `${ENTRY_META_COL} minmax(0, 1fr) minmax(88px, 28%)`,
+          gridTemplateColumns: `${ENTRY_META_COL} minmax(0, 1fr) ${ENTRY_META_COL}`,
           columnGap: ENTRY_COL_GAP_L5,
           rowGap: "2px",
           alignItems: "start",
@@ -875,8 +1413,8 @@ function formatTechStackForDisplay(stack: string): string {
     .join(", ");
 }
 
-/** Projects: classic one-line preview when no date range; entry layouts when start/end are set */
-function renderProjectBlock(p: Project, customize: ResumeCustomize): React.ReactNode {
+/** Project title / meta only (pagination splits bullets separately). */
+function renderProjectHeaderOnly(p: Project, customize: ResumeCustomize): React.ReactNode {
   const dateStr = formatProjectRange(p.start, p.end);
   const hasDate = !!dateStr.trim();
   const name = (p.name ?? "").trim();
@@ -895,22 +1433,6 @@ function renderProjectBlock(p: Project, customize: ResumeCustomize): React.React
       <IconExternalLink />
     </a>
   ) : null;
-
-  const bullets =
-    p.bulletsHtml?.trim() ? (
-      <div
-        className="text-slate-800"
-        style={{
-          marginTop: ENTRY_BODY_TOP_GAP_PX,
-          overflowWrap: "anywhere",
-          wordBreak: "break-word",
-          ...(hasDate
-            ? getEntryBodyIndentStyle(customize, !!dateStr.trim())
-            : { paddingLeft: "0.6em" }),
-        }}
-        dangerouslySetInnerHTML={{ __html: injectBulletStyles(p.bulletsHtml.trim()) }}
-      />
-    ) : null;
 
   if (!hasDate) {
     const { titleFirst } = getListingOrders(customize);
@@ -944,7 +1466,7 @@ function renderProjectBlock(p: Project, customize: ResumeCustomize): React.React
     );
     const subLine = subtitle ? <div style={subCssProps}>{subtitle}</div> : null;
     return (
-      <div>
+      <>
         {titleFirst ? (
           <>
             {nameLineStrong}
@@ -960,20 +1482,41 @@ function renderProjectBlock(p: Project, customize: ResumeCustomize): React.React
         ) : (
           nameLineStrong
         )}
-        {bullets}
-      </div>
+      </>
     );
   }
 
+  return renderEntryHeader(name, subtitle || undefined, dateStr, loc || undefined, customize, techLine, undefined, linkHref || undefined);
+}
+
+function renderProjectBlock(p: Project, customize: ResumeCustomize): React.ReactNode {
+  const dateStr = formatProjectRange(p.start, p.end);
+  const hasDate = !!dateStr.trim();
+  const bulletPrep = p.bulletsHtml?.trim() ? prepareRichPreviewHtml(p.bulletsHtml.trim()) : null;
+  const bullets = bulletPrep ? (
+    <div
+      className="text-slate-800"
+      style={{
+        marginTop: ENTRY_BODY_TOP_GAP_PX,
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+        ...(hasDate
+          ? getEntryBodyIndentStyle(customize, !!dateStr.trim())
+          : { paddingLeft: "0.6em" }),
+        ...(bulletPrep.textAlign ? { textAlign: bulletPrep.textAlign } : {}),
+      }}
+      dangerouslySetInnerHTML={{ __html: bulletPrep.html }}
+    />
+  ) : null;
   return (
     <div>
-      {renderEntryHeader(name, subtitle || undefined, dateStr, loc || undefined, customize, techLine, undefined, linkHref || undefined)}
+      {renderProjectHeaderOnly(p, customize)}
       {bullets}
     </div>
   );
 }
 
-/** Build blocks (we paginate by block) */
+/** Build blocks (continuous flow; pages slice by viewport height for line-level breaks) */
 function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: number): Block[] {
   const blocks: Block[] = [];
 
@@ -1085,19 +1628,26 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
   };
 
   const headerLayout = normalizeHeaderLayout(customize.headerLayout);
-  const summaryAlignLeft = headerLayout === "splitRight" || headerLayout === "nameThenInline";
+  const summaryAlignLeft =
+    headerLayout === "splitRight" || headerLayout === "nameThenInline" || headerLayout === "stackLeft";
 
-  const summaryBlock = data.summary?.trim() ? (
+  const summaryDefaultAlignClass = summaryAlignLeft
+    ? "[&_p]:text-left [&_ul]:text-left [&_ol]:text-left"
+    : "[&_p]:text-center [&_ul]:text-center [&_ol]:text-center";
+
+  const summaryPrep = data.summary?.trim() ? prepareRichPreviewHtml(data.summary.trim()) : null;
+  const summaryBlock = summaryPrep ? (
     <div
+      className={summaryPrep.textAlign ? undefined : summaryDefaultAlignClass}
       style={{
         marginTop: summaryAlignLeft ? "10px" : "6px",
         fontSize: "12px",
         color: "#1a1a1a",
         overflowWrap: "anywhere",
         wordBreak: "break-word",
-        textAlign: summaryAlignLeft ? "left" : "center",
+        ...(summaryPrep.textAlign ? { textAlign: summaryPrep.textAlign } : {}),
       }}
-      dangerouslySetInnerHTML={{ __html: injectBulletStyles(data.summary.trim()) }}
+      dangerouslySetInnerHTML={{ __html: summaryPrep.html }}
     />
   ) : null;
 
@@ -1109,19 +1659,19 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
 
     const wrapBanner = (node: React.ReactNode) => {
       if (!isBanner) return node;
-      /** Bleed into the page’s top padding so the bar meets the top edge (no white strip above). */
+      /** Full-bleed bar: explicit page width + negative inset so color reaches the sheet edges. */
       return (
         <div
           style={{
             background: bannerBg,
+            width: LETTER_W,
+            boxSizing: "border-box",
             marginLeft: -contentPadPx,
-            marginRight: -contentPadPx,
             marginTop: -padYpx,
             paddingTop: padYpx + 14,
             paddingBottom: 22,
             paddingLeft: contentPadPx,
             paddingRight: contentPadPx,
-            boxSizing: "border-box",
           }}
         >
           {node}
@@ -1230,7 +1780,38 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
       );
     }
 
-    // stackCenter — name, location, headline, then contacts each on their own visual rows (centered)
+    if (headerLayout === "stackLeft") {
+      return (
+        <div>
+          {wrapBanner(
+            <div style={{ textAlign: "left" }}>
+              <div style={nameStyle}>{nameTrim}</div>
+              {renderLocationWithIcon("leftBlock")}
+              {headlineBlock}
+              {contactItems.length > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: "5px",
+                    marginTop: "6px",
+                    color: contactColor,
+                    fontSize: contactFontSize,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {contactItems.map((item, i) => renderContactChip(item, i, "left"))}
+                </div>
+              ) : null}
+            </div>
+          )}
+          {summaryBlock}
+        </div>
+      );
+    }
+
+    // stackCenter — name, location, headline on separate lines; contact chips one centered wrapping row (matches layout thumbnail)
     return (
       <div className="text-center">
         {wrapBanner(
@@ -1242,10 +1823,11 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
               <div
                 style={{
                   display: "flex",
+                  flexWrap: "wrap",
                   justifyContent: "center",
                   alignItems: "center",
-                  flexWrap: "wrap",
                   gap: "10px",
+                  rowGap: "6px",
                   marginTop: "6px",
                   color: contactColor,
                   fontSize: contactFontSize,
@@ -1281,18 +1863,22 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
           node: (
             <div>
               {renderEntryHeader(title, subtitle, dateStr, e.city, customize, undefined, e.gpa)}
-              {e.coursework?.trim() ? (
-                <div
-                  className="text-slate-900"
-                  style={{ overflowWrap: "anywhere", wordBreak: "break-word", ...getCourseworkIndentStyle(customize, hasLeftMeta) }}
-                >
-                  <span className="font-semibold">Coursework:</span>{" "}
+              {e.coursework?.trim() ? (() => {
+                const cw = prepareRichPreviewHtml(e.coursework.trim());
+                return (
                   <div
-                    className="inline min-w-0 align-baseline [&_p]:m-0 [&_p]:inline [&_p]:leading-[inherit]"
-                    dangerouslySetInnerHTML={{ __html: injectBulletStyles(e.coursework.trim()) }}
+                    className="text-slate-900 [&_p]:m-0 [&_p]:leading-[inherit]"
+                    style={{
+                      marginTop: 6,
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                      ...getCourseworkIndentStyle(customize, hasLeftMeta),
+                      ...(cw.textAlign ? { textAlign: cw.textAlign } : {}),
+                    }}
+                    dangerouslySetInnerHTML={{ __html: cw.html }}
                   />
-                </div>
-              ) : null}
+                );
+              })() : null}
             </div>
           ),
         });
@@ -1307,18 +1893,22 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
           node: (
             <div>
               {renderEntryHeader(x.title, x.company, dateStr, x.location, customize)}
-              {x.bulletsHtml?.trim() ? (
-                <div
-                  className="text-slate-800"
-                  style={{
-                    marginTop: ENTRY_BODY_TOP_GAP_PX,
-                    overflowWrap: "anywhere",
-                    wordBreak: "break-word",
-                    ...getEntryBodyIndentStyle(customize, hasLeftMeta),
-                  }}
-                  dangerouslySetInnerHTML={{ __html: injectBulletStyles(x.bulletsHtml.trim()) }}
-                />
-              ) : null}
+              {x.bulletsHtml?.trim() ? (() => {
+                const exp = prepareRichPreviewHtml(x.bulletsHtml.trim());
+                return (
+                  <div
+                    className="text-slate-800"
+                    style={{
+                      marginTop: ENTRY_BODY_TOP_GAP_PX,
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                      ...getEntryBodyIndentStyle(customize, hasLeftMeta),
+                      ...(exp.textAlign ? { textAlign: exp.textAlign } : {}),
+                    }}
+                    dangerouslySetInnerHTML={{ __html: exp.html }}
+                  />
+                );
+              })() : null}
             </div>
           ),
         });
@@ -1332,23 +1922,55 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         });
       });
     } else if (key === "skills" && (data.skillBlocks ?? []).length) {
-      blocks.push({ key: "skills-title", node: <SectionHeading title="Skills" customize={customize} /> });
-      data.skillBlocks.forEach((b) => {
-        blocks.push({
-          key: `skill-${b.id}`,
-          node: (
-            <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
-              <span className="font-semibold text-slate-900" style={{ color: pickAccent(customize, "dotsBarsBubbles", "#0f172a") }}>
-                {b.title}:{" "}
-              </span>
-              {b.kind === "text" ? (
-                <span className="text-slate-900" dangerouslySetInnerHTML={{ __html: injectBulletStyles(b.text ?? "") }} />
-              ) : (
-                <span className="text-slate-900">{(b.items ?? []).join(", ")}</span>
-              )}
+      const skillGap = customize.entryGapPx;
+      const skillLinePx = Math.max(1, Math.round(baseFontPx * customize.lineHeight));
+      blocks.push({
+        key: "skills-section",
+        node: (
+          <div>
+            <SectionHeading title="Skills" customize={customize} />
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: `${skillGap}px`,
+              }}
+            >
+              {data.skillBlocks.map((b) => (
+                <div
+                  key={b.id}
+                  style={{
+                    display: "block",
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    lineHeight: `${skillLinePx}px`,
+                  }}
+                >
+                  <span className="font-semibold text-slate-900" style={{ color: pickAccent(customize, "dotsBarsBubbles", "#0f172a") }}>
+                    {b.title}:{" "}
+                  </span>
+                  {b.kind === "text" ? (() => {
+                    const sk = prepareRichPreviewHtml((b.text ?? "").trim());
+                    if (!sk.html) return null;
+                    return (
+                      <div
+                        className="min-w-0 max-w-full text-slate-900 [&_p]:m-0"
+                        style={{
+                          display: "block",
+                          lineHeight: `${skillLinePx}px`,
+                          ...(sk.textAlign ? { textAlign: sk.textAlign } : {}),
+                        }}
+                        dangerouslySetInnerHTML={{ __html: sk.html }}
+                      />
+                    );
+                  })() : (
+                    <span className="text-slate-900">{(b.items ?? []).join(", ")}</span>
+                  )}
+                </div>
+              ))}
             </div>
-          ),
-        });
+          </div>
+        ),
       });
     } else if (key === "achievements" && hasAny(data.achievements)) {
       blocks.push({ key: "ach-title", node: <SectionHeading title="Awards / Achievements" customize={customize} /> });
@@ -1356,9 +1978,21 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         key: "ach-list",
         node: (
           <div className="space-y-1">
-            {(data.achievements ?? []).filter((a) => a.trim()).map((a, i) => (
-              <div key={i} className="text-slate-900" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: injectBulletStyles(a.trim()) }} />
-            ))}
+            {(data.achievements ?? []).filter((a) => a.trim()).map((a, i) => {
+              const ach = prepareRichPreviewHtml(a.trim());
+              return (
+                <div
+                  key={i}
+                  className="text-slate-900"
+                  style={{
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    ...(ach.textAlign ? { textAlign: ach.textAlign } : {}),
+                  }}
+                  dangerouslySetInnerHTML={{ __html: ach.html }}
+                />
+              );
+            })}
           </div>
         ),
       });
@@ -1373,30 +2007,38 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
             <div>
               {renderEntryHeader(c.title, c.subtitle, dateStr, c.location, customize)}
               {c.mode === "text" ? (
-                c.text?.trim() ? (
+                c.text?.trim() ? (() => {
+                  const ct = prepareRichPreviewHtml(c.text.trim());
+                  return (
+                    <div
+                      className="text-slate-800"
+                      style={{
+                        marginTop: ENTRY_BODY_TOP_GAP_PX,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                        ...getCourseworkIndentStyle(customize, hasLeftMeta),
+                        ...(ct.textAlign ? { textAlign: ct.textAlign } : {}),
+                      }}
+                      dangerouslySetInnerHTML={{ __html: ct.html }}
+                    />
+                  );
+                })() : null
+              ) : c.bulletsHtml?.trim() ? (() => {
+                const cb = prepareRichPreviewHtml(c.bulletsHtml.trim());
+                return (
                   <div
                     className="text-slate-800"
                     style={{
                       marginTop: ENTRY_BODY_TOP_GAP_PX,
                       overflowWrap: "anywhere",
                       wordBreak: "break-word",
-                      ...getCourseworkIndentStyle(customize, hasLeftMeta),
+                      ...getEntryBodyIndentStyle(customize, hasLeftMeta),
+                      ...(cb.textAlign ? { textAlign: cb.textAlign } : {}),
                     }}
-                    dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.text.trim()) }}
+                    dangerouslySetInnerHTML={{ __html: cb.html }}
                   />
-                ) : null
-              ) : c.bulletsHtml?.trim() ? (
-                <div
-                  className="text-slate-800"
-                  style={{
-                    marginTop: ENTRY_BODY_TOP_GAP_PX,
-                    overflowWrap: "anywhere",
-                    wordBreak: "break-word",
-                    ...getEntryBodyIndentStyle(customize, hasLeftMeta),
-                  }}
-                  dangerouslySetInnerHTML={{ __html: injectBulletStyles(c.bulletsHtml.trim()) }}
-                />
-              ) : null}
+                );
+              })() : null}
             </div>
           ),
         });
@@ -1422,6 +2064,33 @@ const OverleafTabsPreview = React.forwardRef<
 
   const contentW = LETTER_W - padX * 2;
   const contentH = LETTER_H - padY * 2;
+
+  /** Theoretical line step (before DOM measurement). */
+  const lineStepPx = useMemo(
+    () => Math.max(1, Math.round(baseFontPx * customize.lineHeight)),
+    [baseFontPx, customize.lineHeight]
+  );
+
+  const sliceDefault = useMemo(() => {
+    const snap = computeLineSnappedViewport(contentH, lineStepPx);
+    return {
+      ...snap,
+      pageCount: 1,
+      pageWindows: [{ start: 0, contentEnd: snap.viewportH }] as PageContentWindow[],
+    };
+  }, [contentH, lineStepPx]);
+
+  /** Measured snap + viewport + page windows (contiguous content bands + bottom clip, no overlap). */
+  const [measuredSlice, setMeasuredSlice] = useState<{
+    lineSnapPx: number;
+    viewportH: number;
+    padTop: number;
+    padBottom: number;
+    pageCount: number;
+    pageWindows: PageContentWindow[];
+  } | null>(null);
+
+  const pm = measuredSlice ?? sliceDefault;
 
   const fontFamily = useMemo(() => {
     const name = (customize.fontName?.trim() || "Lato") as keyof typeof fontVarMap;
@@ -1481,84 +2150,54 @@ const OverleafTabsPreview = React.forwardRef<
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  const [pages, setPages] = useState<Block[][]>([]);
   const [scale, setScale] = useState(1);
 
-  // main measure function
+  /** Measure full content height then split into fixed-height pages. */
   const measureAndPaginate = async () => {
     const root = measureRef.current;
     if (!root) return;
 
-    // Wait for fonts to be ready (this is the BIG fix for overflow)
     try {
       // @ts-ignore
-      if (document?.fonts?.ready) {
-        // @ts-ignore
-        await document.fonts.ready;
-      }
-    } catch {
-      // ignore
-    }
+      if (document?.fonts?.ready) await document.fonts.ready;
+    } catch { /* ignore */ }
 
-    // give layout multiple beats to ensure rendering is complete
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise((r) => setTimeout(() => r(null), 100));
+    await new Promise((r) => setTimeout(() => r(null), 80));
 
-    const kids = Array.from(root.querySelectorAll<HTMLElement>("[data-block]"));
-    
-    if (kids.length !== blocks.length) {
-      // Measurement not ready yet, retry
-      setTimeout(() => measureAndPaginate(), 200);
-      return;
-    }
+    const strip = root.querySelector<HTMLElement>("[data-resume-flow-strip]");
+    if (!strip) { setTimeout(() => measureAndPaginate(), 200); return; }
 
-    const heights = kids.map((el) => {
-      const computedStyle = window.getComputedStyle(el);
-      const marginTop = parseFloat(computedStyle.marginTop) || 0;
-      const marginBottom = parseFloat(computedStyle.marginBottom) || 0;
-      return Math.max(el.offsetHeight + marginTop + marginBottom, 0);
+    const flowRoot = strip.querySelector<HTMLElement>(".resume-preview");
+    if (!flowRoot) { setTimeout(() => measureAndPaginate(), 200); return; }
+
+    /** scrollHeight is the stable content extent; max() with others was inflating `th` and creating bogus trailing pages. */
+    const totalH = Math.ceil(flowRoot.scrollHeight);
+    if (totalH <= 0 && blocks.length > 0) { setTimeout(() => measureAndPaginate(), 200); return; }
+
+    const { viewportH, padTop, padBottom } = computeLineSnappedViewport(contentH, lineStepPx);
+    const lineSnapPx = measureLineSnapFromStrip(strip, lineStepPx);
+
+    const bands = collectLineBands(flowRoot, strip, viewportH, lineSnapPx);
+    /** Line bands only — block-atomic moves were sending whole projects/skills to the next page and leaving empty space. */
+    const pageWindows = computePageWindowsFromBands(totalH, viewportH, bands);
+
+    const n = pageWindows.length;
+    setMeasuredSlice((prev) => {
+      const next = { lineSnapPx, viewportH, padTop, padBottom, pageCount: n, pageWindows };
+      if (
+        prev &&
+        prev.viewportH === next.viewportH &&
+        prev.pageCount === next.pageCount &&
+        prev.pageWindows.every((w, i) => w.start === next.pageWindows[i].start && w.contentEnd === next.pageWindows[i].contentEnd)
+      ) return prev;
+      return next;
     });
-
-    const lineH = baseFontPx * customize.lineHeight;
-
-    const nextPages: Block[][] = [];
-    let current: Block[] = [];
-    let used = 0;
-
-    blocks.forEach((b, i) => {
-      const h = heights[i] ?? 0;
-      const prevKey = i > 0 ? blocks[i - 1].key : undefined;
-      const gapBefore = marginTopBeforeBlock(b.key, prevKey, customize.sectionGapPx, customize.entryGapPx);
-      const gap = current.length > 0 ? gapBefore : 0;
-      const spaceNeeded = h + gap;
-
-      if (current.length > 0 && used + spaceNeeded > contentH - lineH * 6) {
-        nextPages.push(current);
-        current = [];
-        used = 0;
-      }
-
-      current.push(b);
-      used += (current.length === 1 ? 0 : gapBefore) + h;
-    });
-
-    // Add the last page if it has content
-    if (current.length) nextPages.push(current);
-    
-    // Always set pages - ensure we have at least one page
-    if (nextPages.length === 0 && blocks.length > 0) {
-      // If measurement failed completely, show all blocks (will be visible, not hidden)
-      setPages([blocks]);
-    } else {
-      setPages(nextPages);
-    }
   };
 
-  // Recalculate whenever inputs change
   useEffect(() => {
-    // Show new block content immediately; stale `pages` kept old layout until measure finished.
-    setPages([blocks]);
+    setMeasuredSlice(null);
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
@@ -1569,7 +2208,7 @@ const OverleafTabsPreview = React.forwardRef<
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks, contentH, contentW, baseFontPx, customize.lineHeight, fontFamily, customize.entryGapPx, customize.sectionGapPx]);
+  }, [blocks, contentH, contentW, lineStepPx, baseFontPx, customize.lineHeight, fontFamily, customize.entryGapPx, customize.sectionGapPx]);
 
   // Calculate scale to fit container width
   useEffect(() => {
@@ -1616,14 +2255,15 @@ const OverleafTabsPreview = React.forwardRef<
     width: contentW,
     fontFamily,
     fontSize: baseFontPx,
+    /* Body bullets use px line-height via .resume-preview p/li; keep unitless here so header/name lines aren’t squashed. */
     lineHeight: customize.lineHeight,
     boxSizing: "border-box",
   };
 
   const totalScaledHeight = useMemo(() => {
-    const numPages = pages.length || 1;
+    const numPages = pm.pageCount || 1;
     return (LETTER_H * numPages + 24 * (numPages - 1)) * scale;
-  }, [pages.length, scale]);
+  }, [pm.pageCount, scale]);
 
   useImperativeHandle(ref, () => ({
     download: async () => {
@@ -1643,6 +2283,8 @@ const OverleafTabsPreview = React.forwardRef<
           quality: 0.97,
           backgroundColor: "#ffffff",
           pixelRatio: 2,
+          width: LETTER_W,
+          height: LETTER_H,
         });
         if (i > 0) doc.addPage("letter", "portrait");
         doc.addImage(dataUrl, "JPEG", 0, 0, 612, 792);
@@ -1657,19 +2299,17 @@ const OverleafTabsPreview = React.forwardRef<
       <style>{`
         .resume-preview ul { list-style: none; padding-left: 0.6em; margin: 0; }
         .resume-preview ol { list-style: none; padding-left: 0.6em; margin: 0; }
-        .resume-preview li { padding-left: 0.9em; text-indent: -0.9em; margin: 0; }
+        .resume-preview li { padding-left: 0.9em; text-indent: -0.9em; margin: 0; line-height: ${pm.lineSnapPx}px; }
         .resume-preview li::before { content: "• "; }
-        .resume-preview li p { display: inline; margin: 0; }
-        .resume-preview p { margin: 0; }
+        .resume-preview li p { display: inline; margin: 0; line-height: inherit; }
+        .resume-preview p { margin: 0; line-height: ${pm.lineSnapPx}px; }
         .resume-preview a { text-decoration: none; color: inherit; }
       `}</style>
       {/* Hidden measurement layer — outside the scale transform so heights are true 1× */}
       <div
         ref={measureRef}
         aria-hidden
-        className="resume-preview"
         style={{
-          ...commonTextStyle,
           width: contentW,
           position: "fixed",
           left: -contentW - 100,
@@ -1678,18 +2318,15 @@ const OverleafTabsPreview = React.forwardRef<
           pointerEvents: "none",
         }}
       >
-        {blocks.map((b, i) => (
-          <div
-            key={b.key}
-            data-block
-            style={{
-              marginTop: marginTopBeforeBlock(b.key, i > 0 ? blocks[i - 1].key : undefined, customize.sectionGapPx, customize.entryGapPx),
-              boxSizing: "border-box",
-            }}
-          >
-            {b.node}
-          </div>
-        ))}
+        <div data-resume-flow-strip style={{ width: contentW, display: "flow-root" }}>
+          <ResumeFlowColumn
+            blocks={blocks}
+            sectionMarginLevel={customize.sectionGapPx}
+            entityGapPx={customize.entryGapPx}
+            className="resume-preview"
+            style={commonTextStyle}
+          />
+        </div>
       </div>
 
       {/* Scale wrapper — height kept so parent scrolls correctly */}
@@ -1704,11 +2341,19 @@ const OverleafTabsPreview = React.forwardRef<
       >
         {/* Visible pages */}
         <div className="space-y-6">
-          {pages.map((pageBlocks, pageIdx) => (
+          {Array.from({ length: pm.pageCount }, (_, pageIdx) => {
+            const win = pm.pageWindows[pageIdx] ?? { start: 0, contentEnd: pm.viewportH };
+            const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
+            /** Must match the pagination window height — not always `viewportH` when we break early (e.g. before Skills). Using full viewport on a short window showed extra lines and duplicated them on the next page. */
+            const clipAreaH = Math.min(pm.viewportH, clipH);
+            const innerBodyH = pm.padTop + clipAreaH + pm.padBottom;
+            const innerMinH = LETTER_H - padY * 2;
+            const bottomFiller = Math.max(0, innerMinH - innerBodyH);
+            return (
             <div
               key={pageIdx}
               data-resume-page
-            className="bg-white shadow-md"
+              className="bg-white shadow-md"
               style={{
                 width: LETTER_W,
                 height: LETTER_H,
@@ -1720,29 +2365,40 @@ const OverleafTabsPreview = React.forwardRef<
                 boxSizing: "border-box",
               }}
             >
-              <div className="resume-preview" style={{ ...commonTextStyle, height: contentH }}>
-                {pageBlocks.map((b, i) => {
-                  const g = blocks.findIndex((x) => x.key === b.key);
-                  const prevKey = g > 0 ? blocks[g - 1].key : undefined;
-                  const mt =
-                    pageIdx > 0 && i === 0
-                      ? 0
-                      : marginTopBeforeBlock(b.key, prevKey, customize.sectionGapPx, customize.entryGapPx);
-                  return (
-                    <div
-                      key={b.key}
-                      style={{
-                        marginTop: mt,
-                        boxSizing: "border-box",
-                      }}
-                    >
-                      {b.node}
-                    </div>
-                  );
-                })}
+              <div
+                style={{
+                  width: contentW,
+                  minHeight: innerMinH,
+                  overflow: "hidden",
+                  boxSizing: "border-box",
+                }}
+              >
+                {pm.padTop > 0 ? <div style={{ height: pm.padTop }} aria-hidden /> : null}
+                <div
+                  style={{
+                    height: clipAreaH,
+                    width: contentW,
+                    overflow: "hidden",
+                    display: "flow-root",
+                    isolation: "isolate",
+                    contain: "paint",
+                  }}
+                >
+                  <ResumeFlowColumn
+                    blocks={blocks}
+                    sectionMarginLevel={customize.sectionGapPx}
+                    entityGapPx={customize.entryGapPx}
+                    translateY={Math.round(win.start)}
+                    className="resume-preview"
+                    style={commonTextStyle}
+                  />
+                </div>
+                {pm.padBottom > 0 ? <div style={{ height: pm.padBottom }} aria-hidden /> : null}
+                {bottomFiller > 0 ? <div style={{ height: bottomFiller }} aria-hidden /> : null}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

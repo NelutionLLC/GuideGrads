@@ -94,6 +94,15 @@ export default function RichTextArea({ label, value, onChange, placeholder }: Pr
     }
   }, [editor]);
 
+  /** Apply alignment to every paragraph in this field (TipTap otherwise only updates the active block). */
+  const alignWholeField = useCallback(
+    (align: "left" | "center" | "right" | "justify") => {
+      if (!editor) return;
+      editor.chain().focus().selectAll().setTextAlign(align).focus("end").run();
+    },
+    [editor]
+  );
+
   if (!editor) return null;
 
   return (
@@ -101,9 +110,16 @@ export default function RichTextArea({ label, value, onChange, placeholder }: Pr
       <style>{`
         .rta-editor ul { list-style: none; padding-left: 0.6em; margin: 0; }
         .rta-editor ol { list-style: none; padding-left: 0.6em; margin: 0; }
-        .rta-editor li { padding-left: 0.9em; text-indent: -0.9em; margin: 2px 0; }
-        .rta-editor li::before { content: "• "; }
-        .rta-editor li p { display: inline; margin: 0; }
+        .rta-editor li {
+          display: flex;
+          gap: 0.35em;
+          align-items: flex-start;
+          margin: 2px 0;
+          padding-left: 0;
+          text-indent: 0;
+        }
+        .rta-editor li::before { content: "•"; flex-shrink: 0; line-height: inherit; }
+        .rta-editor li p { flex: 1 1 auto; min-width: 0; margin: 0; display: block; }
         .rta-editor a { text-decoration: underline; opacity: 0.8; }
         .rta-editor p { margin: 0; }
       `}</style>
@@ -144,22 +160,22 @@ export default function RichTextArea({ label, value, onChange, placeholder }: Pr
 
           <Divider />
 
-          <ToolbarBtn active={editor.isActive({ textAlign: "left" })} onClick={() => editor.chain().focus().setTextAlign("left").run()} title="Align left">
+          <ToolbarBtn active={editor.isActive({ textAlign: "left" })} onClick={() => alignWholeField("left")} title="Align left (whole field)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="15" y2="12" /><line x1="3" y1="18" x2="18" y2="18" />
             </svg>
           </ToolbarBtn>
-          <ToolbarBtn active={editor.isActive({ textAlign: "center" })} onClick={() => editor.chain().focus().setTextAlign("center").run()} title="Align center">
+          <ToolbarBtn active={editor.isActive({ textAlign: "center" })} onClick={() => alignWholeField("center")} title="Align center (whole field)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="3" y1="6" x2="21" y2="6" /><line x1="6" y1="12" x2="18" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
             </svg>
           </ToolbarBtn>
-          <ToolbarBtn active={editor.isActive({ textAlign: "right" })} onClick={() => editor.chain().focus().setTextAlign("right").run()} title="Align right">
+          <ToolbarBtn active={editor.isActive({ textAlign: "right" })} onClick={() => alignWholeField("right")} title="Align right (whole field)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="3" y1="6" x2="21" y2="6" /><line x1="9" y1="12" x2="21" y2="12" /><line x1="6" y1="18" x2="21" y2="18" />
             </svg>
           </ToolbarBtn>
-          <ToolbarBtn active={editor.isActive({ textAlign: "justify" })} onClick={() => editor.chain().focus().setTextAlign("justify").run()} title="Justify">
+          <ToolbarBtn active={editor.isActive({ textAlign: "justify" })} onClick={() => alignWholeField("justify")} title="Justify (whole field)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
             </svg>
