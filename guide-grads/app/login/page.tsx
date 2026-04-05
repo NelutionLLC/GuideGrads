@@ -15,7 +15,11 @@ export default function LoginPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const err = new URLSearchParams(window.location.search).get("error");
-    if (err === "auth") setMessage("Could not complete sign-in.");
+    if (err === "auth") {
+      setMessage(
+        "Google sign-in could not finish. Try a private window. Use one domain for the whole flow (your custom domain or your Netlify URL—not both). In Supabase → Authentication → URL Configuration, set Site URL to that domain and add https://YOUR_DOMAIN/auth/callback under Redirect URLs."
+      );
+    }
   }, []);
   const [pending, setPending] = useState(false);
 
