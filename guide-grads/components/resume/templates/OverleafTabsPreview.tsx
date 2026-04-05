@@ -311,7 +311,21 @@ function collectLineBands(
 
   const merged = mergeSameLineFragments(raw);
   const dropped = dropListItemContainerBands(merged, lineSnapPx);
-  return subdivideBandsToLineSteps(dropped, lineSnapPx, viewportH);
+
+  /** Section headings (boxed, rule, etc.) have visual elements (backgrounds, lines) that extend above/below
+   *  the text line. Adding their full bounding rect as an atomic band prevents the page break from landing
+   *  inside the heading, which would split the background box across two pages causing a visual overlap. */
+  const headingBands: LineBand[] = [];
+  flowRoot.querySelectorAll<HTMLElement>(".resume-section-heading").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.height < 1 || r.width < 3) return;
+    const t = r.top - stripRect.top + stripEl.scrollTop;
+    const b = r.bottom - stripRect.top + stripEl.scrollTop;
+    if (b - t <= maxH) headingBands.push({ t, b });
+  });
+
+  const allBands = [...dropped, ...headingBands].sort((a, b) => a.t - b.t || a.b - b.b);
+  return subdivideBandsToLineSteps(allBands, lineSnapPx, viewportH);
 }
 
 /** One page slice: show content [start, contentEnd) inside a fixed-height viewport (clip excess bottom). */
@@ -577,8 +591,8 @@ function normalizeHeaderLayout(h: string | undefined): HeaderLayout {
 
 type Block = { key: string; node: React.ReactNode };
 
-/** Space between entry header row and bullets (work, projects, custom) — tighter than former mt-1. */
-const ENTRY_BODY_TOP_GAP_PX = 8;
+/** Space between entry header row and bullets (work, projects, custom). */
+const ENTRY_BODY_TOP_GAP_PX = 2;
 /** Date/location column — compact line-height so a tall right column doesn’t inflate the row above bullets. */
 const ENTRY_META_LINE_HEIGHT = 1.12;
 /** Pulls the bullet block slightly closer to the title/meta row (same for all entry types). */
@@ -796,7 +810,7 @@ function SectionHeading({
 
   if (style === "boxed") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={{ ...sizeStyle, background: "#e2e8f0", width: "100%", padding: "4px 8px", textAlign: "center", boxSizing: "border-box" }}>{txt}</div>
       </div>
     );
@@ -804,7 +818,7 @@ function SectionHeading({
 
   if (style === "underline") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={{ ...sizeStyle, borderBottom: `${lineThickness} solid ${lineColor}`, paddingBottom: "4px", display: "inline-block" }}>{txt}</div>
       </div>
     );
@@ -812,7 +826,7 @@ function SectionHeading({
 
   if (style === "split") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
         <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
         <div style={lineStyle} />
       </div>
@@ -821,7 +835,7 @@ function SectionHeading({
 
   if (style === "plain") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={sizeStyle}>{txt}</div>
       </div>
     );
@@ -829,7 +843,7 @@ function SectionHeading({
 
   if (style === "double") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
         <div style={lineStyle} />
         <div style={{ ...sizeStyle, marginTop: "5px", marginBottom: "5px" }}>{txt}</div>
         <div style={lineStyle} />
@@ -839,7 +853,7 @@ function SectionHeading({
 
   if (style === "leftbar") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "stretch", gap: "8px" }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "stretch", gap: "8px" }}>
         <div style={{ width: lineThickness === "1px" ? "3px" : lineThickness === "1.5px" ? "4px" : "5px", background: lineColor, borderRadius: "2px", flexShrink: 0 }} />
         <div style={sizeStyle}>{txt}</div>
       </div>
@@ -848,7 +862,7 @@ function SectionHeading({
 
   if (style === "centered") {
     return (
-      <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
+      <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1, display: "flex", alignItems: "center", gap: "10px" }}>
         <div style={lineStyle} />
         <div style={{ ...sizeStyle, whiteSpace: "nowrap" }}>{txt}</div>
         <div style={lineStyle} />
@@ -858,7 +872,7 @@ function SectionHeading({
 
   // default: "rule"
   return (
-    <div style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
+    <div className="resume-section-heading" style={{ paddingTop: padTop, paddingBottom: padBottom, lineHeight: 1 }}>
       <div style={sizeStyle}>{txt}</div>
       <div style={{ marginTop: "2px", marginBottom: "3px", ...lineStyle }} />
     </div>
@@ -1109,7 +1123,25 @@ function renderEntryHeader(
   );
   const projectLeftStack = <div style={{ minWidth: 0 }}>{projectTitleBody}</div>;
 
-  /** l4 left meta: education + GPA → two lines (same pattern as l2/l3 right); else one line */
+  const metaD = (dateStr ?? "").trim();
+  const metaL = (location ?? "").trim();
+
+  /** Render two-line date/location (used by l2/l3 right column and l4 left column). */
+  const renderMetaTwoLines = (align: "left" | "right") => {
+    const ta = align === "right" ? "right" as const : "left" as const;
+    const lineStyle: React.CSSProperties = { textAlign: ta, lineHeight: ENTRY_META_LINE_HEIGHT };
+    if (hasGpa) return educationMetaTwoLines(dateStr, location, gpaDisplay, metaDateFirst, align);
+    if (metaD && metaL) {
+      return metaDateFirst ? (
+        <><div style={lineStyle}>{metaD}</div><div style={lineStyle}>{metaL}</div></>
+      ) : (
+        <><div style={lineStyle}>{metaL}</div><div style={lineStyle}>{metaD}</div></>
+      );
+    }
+    return <div style={lineStyle}>{metaSameLine}</div>;
+  };
+
+  /** l4 left meta: date & location on separate lines when both present; else one line */
   const leftMetaStack =
     hasDate || hasLoc || hasGpa ? (
       <div
@@ -1125,11 +1157,7 @@ function renderEntryHeader(
           gap: "1px",
         }}
       >
-        {hasGpa ? (
-          educationMetaTwoLines(dateStr, location, gpaDisplay, metaDateFirst, "left")
-        ) : (
-          <div>{metaSameLine}</div>
-        )}
+        {renderMetaTwoLines("left")}
       </div>
     ) : null;
 
@@ -1163,7 +1191,7 @@ function renderEntryHeader(
     );
   }
 
-  /** l2 / l3 right meta: education + GPA → two lines; else one line */
+  /** l2 / l3 right meta: date & location on separate lines when both present; else one line */
   const rightMetaColumn =
     hasDate || hasLoc || hasGpa ? (
       <div
@@ -1178,11 +1206,7 @@ function renderEntryHeader(
           gap: "1px",
         }}
       >
-        {hasGpa ? (
-          educationMetaTwoLines(dateStr, location, gpaDisplay, metaDateFirst, "right")
-        ) : (
-          <div style={{ textAlign: "right" }}>{metaSameLine}</div>
-        )}
+        {renderMetaTwoLines("right")}
       </div>
     ) : null;
 
@@ -1869,7 +1893,7 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
                   <div
                     className="text-slate-900 [&_p]:m-0 [&_p]:leading-[inherit]"
                     style={{
-                      marginTop: 6,
+                      marginTop: 2,
                       overflowWrap: "anywhere",
                       wordBreak: "break-word",
                       ...getCourseworkIndentStyle(customize, hasLeftMeta),
@@ -2262,8 +2286,21 @@ const OverleafTabsPreview = React.forwardRef<
 
   const totalScaledHeight = useMemo(() => {
     const numPages = pm.pageCount || 1;
-    return (LETTER_H * numPages + 24 * (numPages - 1)) * scale;
-  }, [pm.pageCount, scale]);
+    let total = 0;
+    for (let i = 0; i < numPages; i++) {
+      const isLast = i === numPages - 1;
+      if (isLast) {
+        total += LETTER_H;
+      } else {
+        const win = pm.pageWindows[i] ?? { start: 0, contentEnd: pm.viewportH };
+        const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
+        const clipAreaH = Math.min(pm.viewportH, clipH);
+        total += padY * 2 + clipAreaH;
+      }
+    }
+    total += 24 * Math.max(0, numPages - 1);
+    return total * scale;
+  }, [pm.pageCount, pm.pageWindows, pm.viewportH, padY, scale]);
 
   useImperativeHandle(ref, () => ({
     download: async () => {
@@ -2346,9 +2383,9 @@ const OverleafTabsPreview = React.forwardRef<
             const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
             /** Must match the pagination window height — not always `viewportH` when we break early (e.g. before Skills). Using full viewport on a short window showed extra lines and duplicated them on the next page. */
             const clipAreaH = Math.min(pm.viewportH, clipH);
-            const innerBodyH = pm.padTop + clipAreaH + pm.padBottom;
-            const innerMinH = LETTER_H - padY * 2;
-            const bottomFiller = Math.max(0, innerMinH - innerBodyH);
+            const isLastPage = pageIdx === pm.pageCount - 1;
+            /** Last page is always full LETTER_H (real page). Intermediate pages with early breaks shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
+            const pageHeight = isLastPage ? LETTER_H : padY * 2 + clipAreaH;
             return (
             <div
               key={pageIdx}
@@ -2356,7 +2393,7 @@ const OverleafTabsPreview = React.forwardRef<
               className="bg-white shadow-md"
               style={{
                 width: LETTER_W,
-                height: LETTER_H,
+                height: pageHeight,
                 paddingLeft: padX,
                 paddingRight: padX,
                 paddingTop: padY,
@@ -2368,7 +2405,6 @@ const OverleafTabsPreview = React.forwardRef<
               <div
                 style={{
                   width: contentW,
-                  minHeight: innerMinH,
                   overflow: "hidden",
                   boxSizing: "border-box",
                 }}
@@ -2394,7 +2430,6 @@ const OverleafTabsPreview = React.forwardRef<
                   />
                 </div>
                 {pm.padBottom > 0 ? <div style={{ height: pm.padBottom }} aria-hidden /> : null}
-                {bottomFiller > 0 ? <div style={{ height: bottomFiller }} aria-hidden /> : null}
               </div>
             </div>
             );
