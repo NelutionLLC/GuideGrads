@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import { clearGuideGradsSignedOutStorage } from "@/lib/resume/constants";
 import type { User } from "@supabase/supabase-js";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
@@ -50,6 +51,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function signOut() {
     if (supabase) await supabase.auth.signOut();
+    clearGuideGradsSignedOutStorage();
+    if (typeof window !== "undefined") {
+      window.location.replace("/");
+    }
   }
 
   return (

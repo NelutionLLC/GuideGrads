@@ -2,7 +2,7 @@
 
 import type { AccentApply, HeaderLayout, ResumeCustomize } from "@/components/resume/ResumeBuilder";
 import { defaultAccentApply } from "@/components/resume/ResumeBuilder";
-import type { CoverLetterData } from "@/types/coverLetter";
+import { type CoverLetterData, coverLetterShouldHidePreviewPlaceholders } from "@/types/coverLetter";
 import React, { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
@@ -119,6 +119,7 @@ type ProfileHeaderProps = {
   padX: number;
   padY: number;
   sectionGapPxResolved: number;
+  hidePreviewPlaceholders: boolean;
 };
 
 function CoverLetterProfileHeader({
@@ -129,6 +130,7 @@ function CoverLetterProfileHeader({
   padX,
   padY,
   sectionGapPxResolved,
+  hidePreviewPlaceholders,
 }: ProfileHeaderProps) {
   const p = letter.profile;
   const dateText = letter.dateStr?.trim() ?? "";
@@ -162,8 +164,9 @@ function CoverLetterProfileHeader({
     fontSize: nameFontPx,
     lineHeight: lineH,
     minWidth: 0,
-    ...(nameFilled ? { color: nameColor, fontStyle: "normal" as const } : ph),
+    ...(nameFilled || hidePreviewPlaceholders ? { color: nameColor, fontStyle: "normal" as const } : ph),
   };
+  const nameDisplay = p.fullName?.trim() || (hidePreviewPlaceholders ? "" : "Full Name");
 
   const contactOpacity = (filled: boolean) => (filled ? (isBanner ? 1 : 0.92) : 1);
 
@@ -214,14 +217,17 @@ function CoverLetterProfileHeader({
   const renderOneLine = (spec: LineSpec, textAlign: "left" | "center" | "right" = "left") => {
     const v = spec.value?.trim();
     const filled = Boolean(v);
-    const label = spec.display && v ? spec.display(v) : v || spec.placeholder;
+    const label =
+      spec.display && v ? spec.display(v) : v || (hidePreviewPlaceholders ? "" : spec.placeholder);
     const styleBase: React.CSSProperties = {
       fontSize: contactFontSize,
       lineHeight: 1.35,
       textAlign,
       ...(filled
         ? { color: contactColor, opacity: contactOpacity(true), fontStyle: "normal" as const }
-        : { ...ph }),
+        : hidePreviewPlaceholders
+          ? { color: contactColor, opacity: contactOpacity(true), fontStyle: "normal" as const }
+          : { ...ph }),
     };
 
     const inner =
@@ -341,7 +347,7 @@ function CoverLetterProfileHeader({
         }}
       >
         <div style={{ ...nameStyle, textAlign: nameTextAlign, flex: justify === "space-between" ? "1 1 auto" : undefined, minWidth: 0 }}>
-          {p.fullName?.trim() || "Full Name"}
+          {nameDisplay}
         </div>
         {showDate ? (
           <div
@@ -379,7 +385,7 @@ function CoverLetterProfileHeader({
               marginBottom: 6,
             }}
           >
-            <div style={{ ...nameStyle, minWidth: 0 }}>{p.fullName?.trim() || "Full Name"}</div>
+            <div style={{ ...nameStyle, minWidth: 0 }}>{nameDisplay}</div>
           </div>
           {renderOneLine(locSpec, "left")}
         </div>
@@ -396,7 +402,7 @@ function CoverLetterProfileHeader({
   } else if (headerLayout === "centerRow2") {
     profileInner = (
       <div style={{ textAlign: "center" }}>
-        <div style={{ ...nameStyle, textAlign: "center" }}>{p.fullName?.trim() || "Full Name"}</div>
+        <div style={{ ...nameStyle, textAlign: "center" }}>{nameDisplay}</div>
         {showDate ? (
           <div style={{ marginTop: 6, fontSize: baseFontPx, lineHeight: lineH, color: dateColor }}>{dateText}</div>
         ) : null}
@@ -413,7 +419,7 @@ function CoverLetterProfileHeader({
   } else if (headerLayout === "stackLeft") {
     profileInner = (
       <div style={{ textAlign: "left" }}>
-        <div style={{ ...nameStyle, textAlign: "left" }}>{p.fullName?.trim() || "Full Name"}</div>
+        <div style={{ ...nameStyle, textAlign: "left" }}>{nameDisplay}</div>
         {showDate ? (
           <div
             style={{
@@ -464,7 +470,7 @@ function CoverLetterProfileHeader({
             boxSizing: "border-box",
           }}
         >
-          <div style={{ ...nameStyle, textAlign: "center" }}>{p.fullName?.trim() || "Full Name"}</div>
+          <div style={{ ...nameStyle, textAlign: "center" }}>{nameDisplay}</div>
         </div>
         {showDate ? (
           <div
@@ -597,7 +603,26 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
   );
   const text = { color: "#0f172a", fontStyle: "normal" as const };
 
+  const hidePreviewPlaceholders = useMemo(
+    () => coverLetterShouldHidePreviewPlaceholders(letter),
+    [
+      letter.bodyHtml,
+      letter.recipientName,
+      letter.recipientTitle,
+      letter.companyName,
+      letter.profile.fullName,
+      letter.profile.location,
+      letter.profile.phone,
+      letter.profile.email,
+      letter.profile.linkedin,
+      letter.profile.github,
+      letter.profile.portfolio,
+    ]
+  );
+
   const signOff = letter.signature?.trim();
+  const salutationTrim = letter.salutation?.trim() ?? "";
+  const closingTrim = letter.closingLine?.trim() ?? "";
 
   useImperativeHandle(ref, () => ({
     download: async () => {
@@ -672,30 +697,31 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
             padX={padX}
             padY={padY}
             sectionGapPxResolved={sectionGapPxResolved}
+            hidePreviewPlaceholders={hidePreviewPlaceholders}
           />
 
           <div style={{ width: contentW, maxWidth: "100%" }}>
             {/* To, + Recipient */}
             <div style={{ marginBottom: sectionGapPxResolved }}>
               <div style={{ ...text, fontSize: baseFontPx * 0.95, marginBottom: 4 }}>To,</div>
-              <div style={letter.recipientName?.trim() ? text : ph}>
-                {letter.recipientName?.trim() || "Recipient Name"}
+              <div style={letter.recipientName?.trim() || hidePreviewPlaceholders ? text : ph}>
+                {letter.recipientName?.trim() || (hidePreviewPlaceholders ? "" : "Recipient Name")}
               </div>
-              <div style={letter.recipientTitle?.trim() ? text : ph}>
-                {letter.recipientTitle?.trim() || "Job Title"}
+              <div style={letter.recipientTitle?.trim() || hidePreviewPlaceholders ? text : ph}>
+                {letter.recipientTitle?.trim() || (hidePreviewPlaceholders ? "" : "Job Title")}
               </div>
-              <div style={letter.companyName?.trim() ? text : ph}>
-                {letter.companyName?.trim() || "Company"}
+              <div style={letter.companyName?.trim() || hidePreviewPlaceholders ? text : ph}>
+                {letter.companyName?.trim() || (hidePreviewPlaceholders ? "" : "Company")}
               </div>
             </div>
 
             <div
               style={{
                 marginBottom: sectionGapPxResolved,
-                ...(letter.salutation?.trim() ? text : ph),
+                ...(salutationTrim || hidePreviewPlaceholders ? text : ph),
               }}
             >
-              {letter.salutation?.trim() || "Dear Hiring Manager,"}
+              {salutationTrim || (hidePreviewPlaceholders ? "" : "Dear Hiring Manager,")}
             </div>
 
             {letter.bodyHtml?.trim() ? (
@@ -704,6 +730,8 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
                 style={{ textAlign: "left", marginBottom: sectionGapPxResolved, ...text }}
                 dangerouslySetInnerHTML={{ __html: letter.bodyHtml.trim() }}
               />
+            ) : hidePreviewPlaceholders ? (
+              <div style={{ marginBottom: sectionGapPxResolved }} aria-hidden />
             ) : (
               <div
                 style={{
@@ -717,11 +745,11 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
             )}
 
             <div>
-              <div style={letter.closingLine?.trim() ? text : ph}>
-                {letter.closingLine?.trim() || "Sincerely,"}
+              <div style={closingTrim || hidePreviewPlaceholders ? text : ph}>
+                {closingTrim || (hidePreviewPlaceholders ? "" : "Sincerely,")}
               </div>
-              <div style={{ marginTop: "0.3em", fontWeight: 600, ...(signOff ? text : ph) }}>
-                {signOff || "Your Name"}
+              <div style={{ marginTop: "0.3em", fontWeight: 600, ...(signOff || hidePreviewPlaceholders ? text : ph) }}>
+                {signOff || (hidePreviewPlaceholders ? "" : "Your Name")}
               </div>
             </div>
           </div>

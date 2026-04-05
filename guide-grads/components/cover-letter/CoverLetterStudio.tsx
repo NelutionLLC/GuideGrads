@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import React, { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import ResumeCustomizePanel from "@/components/resume/ResumeCustomizePanel";
 import CoverLetterForm from "./CoverLetterForm";
 import CoverLetterPreview, { type CoverLetterPreviewHandle } from "./CoverLetterPreview";
@@ -9,13 +10,18 @@ import { STARTER_BODY } from "./CoverLetterForm";
 import type { CoverLetterData } from "@/types/coverLetter";
 import { emptyCoverLetter, normalizeCoverLetter } from "@/types/coverLetter";
 import {
-  RESUME_BUILDER_STORAGE_KEY,
   defaultCustomize,
   emptyResume,
   mergeStoredResumeCustomize,
   type ResumeCustomize,
   type ResumeData,
 } from "@/components/resume/ResumeBuilder";
+import * as coverLetterCloud from "@/lib/cover-letter/cloud";
+import { ACTIVE_RESUME_ID_KEY, RESUME_BUILDER_STORAGE_KEY } from "@/lib/resume/constants";
+
+function snapshotCoverForCloud(letter: CoverLetterData, customize: ResumeCustomize): string {
+  return JSON.stringify({ coverLetter: letter, coverLetterCustomize: customize });
+}
 
 function loadBundleFromStorage(): {
   data: ResumeData;
@@ -96,6 +102,8 @@ function DownloadIcon() {
 type TabKey = "content" | "customize" | "ai";
 
 export default function CoverLetterStudio() {
+  const { user, loading: authLoading } = useAuth();
+
   const [data, setData] = useState<ResumeData>(emptyResume);
   /** Resume customize — only updated from storage refresh; never from this page’s Customize tab. */
   const [resumeCustomize, setResumeCustomize] = useState<ResumeCustomize>(defaultCustomize);
@@ -104,6 +112,11 @@ export default function CoverLetterStudio() {
   const [coverLetter, setCoverLetter] = useState<CoverLetterData>(emptyCoverLetter);
   const [activeTab, setActiveTab] = useState<TabKey>("content");
   const [loaded, setLoaded] = useState(false);
+  /** After we align local cover state with Supabase (or “no row”), autosave may run. */
+  const [coverCloudHydrated, setCoverCloudHydrated] = useState(false);
+  /** Bump to re-fetch cover baseline after resume sync from another tab / focus. */
+  const [coverBaselineEpoch, setCoverBaselineEpoch] = useState(0);
+  const baselineCoverSnapshot = useRef<string | null>(null);
   const previewRef = useRef<CoverLetterPreviewHandle>(null);
 
   useEffect(() => {
@@ -127,7 +140,10 @@ export default function CoverLetterStudio() {
       if (document.visibilityState === "visible") refresh();
     };
     const onStorage = (e: StorageEvent) => {
-      if (e.key === RESUME_BUILDER_STORAGE_KEY && e.newValue) refresh();
+      if (e.key === RESUME_BUILDER_STORAGE_KEY && e.newValue) {
+        refresh();
+        setCoverBaselineEpoch((n) => n + 1);
+      }
     };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("storage", onStorage);
@@ -157,6 +173,72 @@ export default function CoverLetterStudio() {
       /* ignore */
     }
   }, [coverLetter, coverLetterCustomize, data, resumeCustomize, loaded]);
+
+  /**
+   * Load cover letter from `cover_letters` once the session is ready so we don’t treat “empty local state”
+   * as a user edit. Resume JSON is synced only from the Resume Builder page.
+   */
+  useEffect(() => {
+    if (!loaded || !user || authLoading) {
+      if (!user) setCoverCloudHydrated(false);
+      return;
+    }
+    let cancelled = false;
+    setCoverCloudHydrated(false);
+    const activeId = window.localStorage.getItem(ACTIVE_RESUME_ID_KEY);
+    if (!activeId) {
+      const b = loadBundleFromStorage();
+      baselineCoverSnapshot.current = snapshotCoverForCloud(b.coverLetter, b.coverLetterCustomize);
+      setCoverCloudHydrated(true);
+      return;
+    }
+    void (async () => {
+      try {
+        const cl = await coverLetterCloud.getCoverLetterForResume(activeId);
+        if (cancelled) return;
+        const local = loadBundleFromStorage();
+        const letter = cl?.coverLetter ? normalizeCoverLetter(cl.coverLetter) : local.coverLetter;
+        const cust = cl?.coverLetterCustomize
+          ? mergeStoredResumeCustomize(cl.coverLetterCustomize)
+          : local.coverLetterCustomize;
+        setCoverLetter(letter);
+        setCoverLetterCustomize(cust);
+        baselineCoverSnapshot.current = snapshotCoverForCloud(letter, cust);
+      } catch (e) {
+        console.warn("Cover letter hydrate failed", e);
+        const b = loadBundleFromStorage();
+        baselineCoverSnapshot.current = snapshotCoverForCloud(b.coverLetter, b.coverLetterCustomize);
+      } finally {
+        if (!cancelled) setCoverCloudHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, user, authLoading, coverBaselineEpoch]);
+
+  /** Supabase: only `cover_letters` from this page — and only when the letter actually changed. */
+  useEffect(() => {
+    if (!loaded || !user || authLoading || !coverCloudHydrated) return;
+    const t = window.setTimeout(async () => {
+      try {
+        const activeId = window.localStorage.getItem(ACTIVE_RESUME_ID_KEY);
+        if (!activeId) return;
+        const snap = snapshotCoverForCloud(coverLetter, coverLetterCustomize);
+        if (baselineCoverSnapshot.current !== null && snap === baselineCoverSnapshot.current) {
+          return;
+        }
+        await coverLetterCloud.upsertCoverLetterForResume(activeId, {
+          coverLetter,
+          coverLetterCustomize,
+        });
+        baselineCoverSnapshot.current = snap;
+      } catch (e) {
+        console.warn("Cloud cover letter save failed", e);
+      }
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [coverLetter, coverLetterCustomize, loaded, user, authLoading, coverCloudHydrated]);
 
   function setCoverLetterCustomizePatch(patch: Partial<ResumeCustomize>) {
     setCoverLetterCustomize((prev) => ({ ...prev, ...patch }));
