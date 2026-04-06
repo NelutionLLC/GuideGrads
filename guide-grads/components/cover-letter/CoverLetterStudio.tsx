@@ -99,6 +99,21 @@ function DownloadIcon() {
   );
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0 text-white/70" aria-hidden>
+      <path
+        d="M8 10l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transformOrigin: "50% 50%" }}
+      />
+    </svg>
+  );
+}
+
 type TabKey = "content" | "customize" | "ai";
 
 export default function CoverLetterStudio() {
@@ -118,6 +133,8 @@ export default function CoverLetterStudio() {
   const [coverBaselineEpoch, setCoverBaselineEpoch] = useState(0);
   const baselineCoverSnapshot = useRef<string | null>(null);
   const previewRef = useRef<CoverLetterPreviewHandle>(null);
+  const [pageSizeMenuOpen, setPageSizeMenuOpen] = useState(false);
+  const pageSizeWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const b = loadBundleFromStorage();
@@ -248,27 +265,92 @@ export default function CoverLetterStudio() {
     void previewRef.current?.download();
   }
 
+  useEffect(() => {
+    if (!pageSizeMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPageSizeMenuOpen(false);
+    };
+    const onPointer = (e: MouseEvent | PointerEvent) => {
+      const el = pageSizeWrapRef.current;
+      if (el && !el.contains(e.target as Node)) setPageSizeMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [pageSizeMenuOpen]);
+
+  const pageSizeLabel = coverLetterCustomize.pageSize === "a4" ? "A4" : "US Letter";
+
   return (
-    <div className="min-h-screen text-white">
+    <div className="min-h-[calc(100vh-7.5rem)] text-white">
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#071a2f]/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 py-4">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-2 px-4 pt-3 pb-2 sm:gap-3 sm:px-6 sm:pt-4 sm:pb-2.5 xl:grid-cols-[560px_1fr] xl:items-center xl:gap-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <TabButton active={activeTab === "content"} label="Content" onClick={() => setActiveTab("content")} />
             <TabButton active={activeTab === "customize"} label="Customize" onClick={() => setActiveTab("customize")} />
             <TabButton active={activeTab === "ai"} label="AI Tools" onClick={() => setActiveTab("ai")} />
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
             <Link
               href="/resume"
               className="rounded-2xl bg-white/10 px-4 py-2 text-sm text-white/90 hover:bg-white/15"
             >
               Edit resume
             </Link>
+            <div ref={pageSizeWrapRef} className="relative shrink-0">
+              <button
+                type="button"
+                aria-expanded={pageSizeMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Page size"
+                onClick={() => setPageSizeMenuOpen((v) => !v)}
+                className="flex h-10 min-w-[132px] items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white/90 hover:bg-white/15"
+              >
+                <span className="min-w-0 flex-1 truncate text-left">{pageSizeLabel}</span>
+                <Chevron open={pageSizeMenuOpen} />
+              </button>
+              {pageSizeMenuOpen ? (
+                <div
+                  role="listbox"
+                  className="absolute left-0 top-full z-[60] mt-2 w-[min(100vw-2rem,220px)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] py-1 text-white shadow-2xl"
+                >
+                  <button
+                    type="button"
+                    role="option"
+                    className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-white/10 ${
+                      coverLetterCustomize.pageSize === "letter" ? "bg-white/10 text-white" : "text-white/85"
+                    }`}
+                    onClick={() => {
+                      setCoverLetterCustomizePatch({ pageSize: "letter" });
+                      setPageSizeMenuOpen(false);
+                    }}
+                  >
+                    US Letter
+                  </button>
+                  <button
+                    type="button"
+                    role="option"
+                    className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-white/10 ${
+                      coverLetterCustomize.pageSize === "a4" ? "bg-white/10 text-white" : "text-white/85"
+                    }`}
+                    onClick={() => {
+                      setCoverLetterCustomizePatch({ pageSize: "a4" });
+                      setPageSizeMenuOpen(false);
+                    }}
+                  >
+                    A4
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
               onClick={onDownload}
-              className="flex items-center gap-2 rounded-2xl bg-teal-500 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-400"
+              className="flex shrink-0 items-center gap-2 rounded-2xl bg-teal-500 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-400"
             >
               <DownloadIcon />
               Download
@@ -277,9 +359,9 @@ export default function CoverLetterStudio() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1400px] px-6 py-6">
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[560px_1fr]">
-          <aside className="h-[calc(100vh-150px)] space-y-4 overflow-auto pr-1">
+      <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[560px_1fr] xl:items-start xl:gap-6">
+          <aside className="h-[calc(100vh-14rem)] space-y-4 overflow-y-auto overflow-x-hidden pr-1 sm:h-[calc(100vh-150px)] xl:h-[calc(100vh-150px)]">
             {activeTab === "content" ? (
               <CoverLetterForm
                 letter={coverLetter}
@@ -304,8 +386,13 @@ export default function CoverLetterStudio() {
               </div>
             )}
           </aside>
-          <section className="h-[calc(100vh-150px)] overflow-auto rounded-2xl bg-[#e2e5e9] p-8 flex items-start justify-center">
-            <CoverLetterPreview ref={previewRef} letter={coverLetter} customize={coverLetterCustomize} />
+          <section
+            className="flex h-[calc(100vh-14rem)] w-full min-w-0 flex-col items-end overflow-y-auto overflow-x-hidden pt-2 pb-4 sm:h-[calc(100vh-150px)] xl:h-[calc(100vh-150px)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            aria-label="Cover letter preview"
+          >
+            <div className="flex w-full justify-end">
+              <CoverLetterPreview ref={previewRef} letter={coverLetter} customize={coverLetterCustomize} />
+            </div>
           </section>
         </div>
       </div>
