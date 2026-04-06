@@ -2,10 +2,11 @@
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import * as coverLetterCloud from "@/lib/cover-letter/cloud";
+import { resolvePageSize, type PageSize } from "@/lib/page/a4";
 import * as resumeCloud from "@/lib/resume/cloud";
 import { ACTIVE_RESUME_ID_KEY, RESUME_BUILDER_STORAGE_KEY } from "@/lib/resume/constants";
 import { emptyCoverLetter, normalizeCoverLetter } from "@/types/coverLetter";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RichTextArea from "./RichTextArea";
 import OverleafTabsPreview, { type OverleafTabsPreviewHandle } from "./templates/OverleafTabsPreview";
 
@@ -178,6 +179,9 @@ export type ResumeCustomize = {
 
   /** Cover letter preview: show icons beside profile contact lines (location, phone, links, etc.). */
   coverLetterShowContactIcons?: boolean;
+
+  /** Resume preview + PDF page format. Default US Letter. */
+  pageSize: PageSize;
 };
 
 /** ---------------- Defaults ---------------- */
@@ -243,6 +247,8 @@ export const defaultCustomize: ResumeCustomize = {
   sectionOrder: ["basics", "skills", "experience", "education", "projects", "achievements", "custom"],
 
   coverLetterShowContactIcons: false,
+
+  pageSize: "letter",
 };
 
 const DEFAULT_SECTION_ORDER = ["basics", "skills", "experience", "education", "projects", "achievements", "custom"];
@@ -420,6 +426,16 @@ function DownloadIcon() {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4.01 4a1 1 0 0 1-1.4 0l-4.01-4a1 1 0 1 1 1.4-1.42L11 13.59V4a1 1 0 0 1 1-1Z" />
         <path d="M5 19a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z" />
+      </svg>
+    </Icon>
+  );
+}
+
+function EditPencilIcon() {
+  return (
+    <Icon>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
       </svg>
     </Icon>
   );
@@ -624,6 +640,7 @@ export function mergeStoredResumeCustomize(parsed: ResumeCustomize | undefined):
     typeof merged.coverLetterShowContactIcons === "boolean"
       ? merged.coverLetterShowContactIcons
       : defaultCustomize.coverLetterShowContactIcons;
+  merged.pageSize = resolvePageSize(merged.pageSize);
   return merged;
 }
 
@@ -969,8 +986,115 @@ export default function ResumeBuilder() {
     return hit?.name ?? "My resumes";
   }, [user, resumeRows, activeResumeId]);
 
+  const pageSizeLabel = customize.pageSize === "a4" ? "A4" : "US Letter";
+
   /** --- top bar state --- */
   const [resumeMenuOpen, setResumeMenuOpen] = useState(false);
+  const [pageSizeMenuOpen, setPageSizeMenuOpen] = useState(false);
+  const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
+  const toolbarMoreRef = useRef<HTMLDivElement>(null);
+  const resumeMenuWrapRef = useRef<HTMLDivElement>(null);
+  const pageSizeWrapRef = useRef<HTMLDivElement>(null);
+  const [renameResumeId, setRenameResumeId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameDraftRef = useRef(renameDraft);
+  renameDraftRef.current = renameDraft;
+  const resumeRowsRef = useRef(resumeRows);
+  resumeRowsRef.current = resumeRows;
+
+  const saveResumeRename = useCallback(async () => {
+    const rid = renameResumeId;
+    if (!rid || !user) {
+      setRenameResumeId(null);
+      setRenameDraft("");
+      return;
+    }
+    const name = renameDraftRef.current.trim();
+    const prev = resumeRowsRef.current.find((x) => x.id === rid)?.name ?? "";
+    if (!name) {
+      setRenameResumeId(null);
+      setRenameDraft("");
+      return;
+    }
+    if (name === prev) {
+      setRenameResumeId(null);
+      return;
+    }
+    try {
+      const row = await resumeCloud.getResume(rid);
+      if (!row) return;
+      await resumeCloud.updateResume(rid, row.payload, name);
+      setResumeRows((rs) => rs.map((x) => (x.id === rid ? { ...x, name } : x)));
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setRenameResumeId(null);
+      setRenameDraft("");
+    }
+  }, [renameResumeId, user]);
+
+  useEffect(() => {
+    if (!resumeMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (renameResumeId) {
+          setRenameResumeId(null);
+          setRenameDraft("");
+        } else {
+          setResumeMenuOpen(false);
+        }
+      }
+    };
+    const onPointer = (e: MouseEvent | PointerEvent) => {
+      const el = resumeMenuWrapRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      if (renameResumeId) {
+        void saveResumeRename().then(() => setResumeMenuOpen(false));
+        return;
+      }
+      setResumeMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [resumeMenuOpen, renameResumeId, saveResumeRename]);
+
+  useEffect(() => {
+    if (!toolbarMoreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setToolbarMoreOpen(false);
+    };
+    const onPointer = (e: MouseEvent | PointerEvent) => {
+      const el = toolbarMoreRef.current;
+      if (el && !el.contains(e.target as Node)) setToolbarMoreOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [toolbarMoreOpen]);
+
+  useEffect(() => {
+    if (!pageSizeMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPageSizeMenuOpen(false);
+    };
+    const onPointer = (e: MouseEvent | PointerEvent) => {
+      const el = pageSizeWrapRef.current;
+      if (el && !el.contains(e.target as Node)) setPageSizeMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [pageSizeMenuOpen]);
 
   const previewRef = useRef<OverleafTabsPreviewHandle>(null);
 
@@ -1782,150 +1906,327 @@ export default function ResumeBuilder() {
   }
 
   return (
-    <div className="min-h-screen from-[#071a2f] via-[#071a2f] to-[#061528] text-white">
+    <div className="min-h-[calc(100vh-7.5rem)] from-[#071a2f] via-[#071a2f] to-[#061528] text-white">
       {/* TOP TOOLBAR */}
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#071a2f]/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3 px-6 py-4">
-          <div className="flex items-center gap-2">
+        <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-2 px-4 pt-3 pb-2 sm:gap-3 sm:px-6 sm:pt-4 sm:pb-2.5 xl:grid-cols-[560px_1fr] xl:items-center xl:gap-6">
+          <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5 sm:gap-2 sm:pb-0 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <TabButton active={activeTab === "content"} label="Content" onClick={() => setActiveTab("content")} />
             <TabButton active={activeTab === "customize"} label="Customize" onClick={() => setActiveTab("customize")} />
             <TabButton active={activeTab === "ai"} label="AI Tools" onClick={() => setActiveTab("ai")} />
           </div>
 
-          <div className="relative flex items-center gap-3">
-            <button
-              onClick={() => setResumeMenuOpen((v) => !v)}
-              className="flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-sm text-white/90 hover:bg-white/15"
-              type="button"
-            >
-              <span className="max-w-[160px] truncate">{resumeToolbarLabel}</span>
-              <Chevron open={resumeMenuOpen} />
-            </button>
+          <div
+            className="relative flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3 xl:justify-end"
+            ref={toolbarMoreRef}
+          >
+            <div ref={resumeMenuWrapRef} className="relative shrink-0">
+              <button
+                onClick={() => {
+                  setResumeMenuOpen((v) => !v);
+                  setToolbarMoreOpen(false);
+                  setPageSizeMenuOpen(false);
+                }}
+                className="hidden items-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-sm text-white/90 hover:bg-white/15 md:flex"
+                type="button"
+              >
+                <span className="max-w-[160px] truncate">{resumeToolbarLabel}</span>
+                <Chevron open={resumeMenuOpen} />
+              </button>
+
+              {resumeMenuOpen ? (
+                <div
+                  className="fixed left-1/2 top-[7.25rem] z-50 w-[min(100vw-2rem,340px)] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] text-white shadow-2xl md:absolute md:left-0 md:right-auto md:top-full md:mt-2 md:translate-x-0"
+                  role="presentation"
+                >
+                  <div className="px-4 py-3 text-lg font-semibold text-white">My Resumes</div>
+                  <div className="border-t border-white/10" />
+                  <div className="max-h-[200px] overflow-y-auto">
+                    {user ? (
+                      resumeRows.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-white/50">No saved resumes yet.</div>
+                      ) : (
+                        resumeRows.map((r) =>
+                          renameResumeId === r.id ? (
+                            <div key={r.id} className="border-b border-white/5 px-3 py-2">
+                              <input
+                                autoFocus
+                                value={renameDraft}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onBlur={() => void saveResumeRename()}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                  if (e.key === "Escape") {
+                                    e.stopPropagation();
+                                    setRenameResumeId(null);
+                                    setRenameDraft("");
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none ring-teal-400/40 focus:ring-2"
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              key={r.id}
+                              className={[
+                                "flex items-center gap-0 border-b border-white/5 last:border-b-0",
+                                r.id === activeResumeId ? "bg-white/10" : "",
+                              ].join(" ")}
+                            >
+                              <button
+                                type="button"
+                                className={`min-w-0 flex-1 truncate px-3 py-3 text-left text-sm hover:bg-white/5 ${
+                                  r.id === activeResumeId ? "font-medium text-white" : "text-white/80"
+                                }`}
+                                onClick={async () => {
+                                  setResumeMenuOpen(false);
+                                  try {
+                                    const row = await resumeCloud.getResume(r.id);
+                                    if (!row) return;
+                                    skipCloudSave.current = true;
+                                    setActiveResumeId(row.id);
+                                    window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+                                    const p = row.payload;
+                                    const mergedData = p.data ? { ...emptyResume, ...p.data } : emptyResume;
+                                    const mergedCustomize = p.customize
+                                      ? mergeStoredResumeCustomize(p.customize)
+                                      : defaultCustomize;
+                                    setData(mergedData);
+                                    setCustomize(mergedCustomize);
+                                    baselineResumeCloudSnapshot.current = snapshotResumeForCloud(
+                                      mergedData,
+                                      mergedCustomize
+                                    );
+                                    await mergeCloudResumeRowIntoLocalStorage(row);
+                                    requestAnimationFrame(() => {
+                                      skipCloudSave.current = false;
+                                    });
+                                  } catch (e) {
+                                    console.warn(e);
+                                  }
+                                }}
+                              >
+                                {r.name}
+                              </button>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-lg p-3 text-white/45 hover:bg-white/10 hover:text-white"
+                                title="Rename resume"
+                                aria-label="Rename resume"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenameResumeId(r.id);
+                                  setRenameDraft(r.name);
+                                }}
+                              >
+                                <EditPencilIcon />
+                              </button>
+                            </div>
+                          )
+                        )
+                      )
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-white/50">Sign in to sync resumes to the cloud.</div>
+                    )}
+                  </div>
+                  <div className="border-t border-white/10" />
+                  <div className="p-4">
+                    <button
+                      className="w-full rounded-xl bg-teal-500 px-4 py-2 font-semibold text-white hover:bg-teal-400"
+                      onClick={async () => {
+                        setResumeMenuOpen(false);
+                        if (!user) return;
+                        try {
+                          skipCloudSave.current = true;
+                          const payload: resumeCloud.ResumeCloudPayload = {
+                            data: emptyResume,
+                            customize: defaultCustomize,
+                            updatedAt: Date.now(),
+                          };
+                          const row = await resumeCloud.createResume(
+                            `Resume No.${resumeRows.length + 1}`,
+                            payload
+                          );
+                          setData(emptyResume);
+                          setCustomize(defaultCustomize);
+                          setActiveResumeId(row.id);
+                          baselineResumeCloudSnapshot.current = snapshotResumeForCloud(emptyResume, defaultCustomize);
+                          window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
+                          window.localStorage.setItem(
+                            RESUME_BUILDER_STORAGE_KEY,
+                            JSON.stringify({
+                              ...readLocalResumeBundleRaw(),
+                              ...payload,
+                              coverLetter: emptyCoverLetter(),
+                              coverLetterCustomize: defaultCustomize,
+                            })
+                          );
+                          setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
+                          requestAnimationFrame(() => {
+                            skipCloudSave.current = false;
+                          });
+                        } catch (e) {
+                          console.warn(e);
+                          skipCloudSave.current = false;
+                        }
+                      }}
+                      type="button"
+                    >
+                      + Add Resume
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div ref={pageSizeWrapRef} className="relative hidden shrink-0 md:block">
+              <button
+                type="button"
+                aria-expanded={pageSizeMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Page size"
+                onClick={() => {
+                  setPageSizeMenuOpen((v) => !v);
+                  setResumeMenuOpen(false);
+                  setToolbarMoreOpen(false);
+                }}
+                className="flex h-10 min-w-[132px] items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white/90 hover:bg-white/15"
+              >
+                <span className="min-w-0 flex-1 truncate text-left">{pageSizeLabel}</span>
+                <Chevron open={pageSizeMenuOpen} />
+              </button>
+              {pageSizeMenuOpen ? (
+                <div
+                  role="listbox"
+                  className="absolute left-0 top-full z-[60] mt-2 w-[min(100vw-2rem,220px)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] py-1 text-white shadow-2xl"
+                >
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={customize.pageSize === "letter"}
+                    className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-white/10 ${
+                      customize.pageSize === "letter" ? "bg-white/10 text-white" : "text-white/85"
+                    }`}
+                    onClick={() => {
+                      setCustomizePatch({ pageSize: "letter" });
+                      setPageSizeMenuOpen(false);
+                    }}
+                  >
+                    US Letter
+                  </button>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={customize.pageSize === "a4"}
+                    className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-white/10 ${
+                      customize.pageSize === "a4" ? "bg-white/10 text-white" : "text-white/85"
+                    }`}
+                    onClick={() => {
+                      setCustomizePatch({ pageSize: "a4" });
+                      setPageSizeMenuOpen(false);
+                    }}
+                  >
+                    A4
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
             <button
-              onClick={onDownload}
-              className="flex items-center gap-2 rounded-2xl bg-teal-500 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-400"
+              onClick={() => {
+                onDownload();
+                setToolbarMoreOpen(false);
+                setPageSizeMenuOpen(false);
+              }}
+              className="hidden shrink-0 items-center gap-2 rounded-2xl bg-teal-500 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-400 md:flex"
               type="button"
             >
               <DownloadIcon />
               Download
             </button>
 
-            <button className="rounded-2xl bg-white/10 p-2 text-white/90 hover:bg-white/15" aria-label="More" type="button">
-              <Kebab />
-            </button>
+            <div className="relative md:hidden">
+              <button
+                className="rounded-2xl bg-white/10 p-2 text-white/90 hover:bg-white/15"
+                aria-expanded={toolbarMoreOpen}
+                aria-haspopup="menu"
+                aria-label="Resume actions"
+                type="button"
+                onClick={() => setToolbarMoreOpen((v) => !v)}
+              >
+                <Kebab />
+              </button>
 
-            {resumeMenuOpen ? (
-              <div className="absolute right-0 top-[52px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] text-white shadow-2xl">
-                <div className="px-4 py-3 text-lg font-semibold text-white">My Resumes</div>
-                <div className="border-t border-white/10" />
-                <div className="max-h-[200px] overflow-y-auto">
-                  {user ? (
-                    resumeRows.length === 0 ? (
-                      <div className="px-4 py-3 text-sm text-white/50">No saved resumes yet.</div>
-                    ) : (
-                      resumeRows.map((r) => (
-                        <button
-                          key={r.id}
-                          type="button"
-                          className={`block w-full px-4 py-3 text-left text-sm hover:bg-white/5 ${
-                            r.id === activeResumeId ? "bg-white/10 text-white" : "text-white/80"
-                          }`}
-                          onClick={async () => {
-                            setResumeMenuOpen(false);
-                            try {
-                              const row = await resumeCloud.getResume(r.id);
-                              if (!row) return;
-                              skipCloudSave.current = true;
-                              setActiveResumeId(row.id);
-                              window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
-                              const p = row.payload;
-                              const mergedData = p.data ? { ...emptyResume, ...p.data } : emptyResume;
-                              const mergedCustomize = p.customize
-                                ? mergeStoredResumeCustomize(p.customize)
-                                : defaultCustomize;
-                              setData(mergedData);
-                              setCustomize(mergedCustomize);
-                              baselineResumeCloudSnapshot.current = snapshotResumeForCloud(
-                                mergedData,
-                                mergedCustomize
-                              );
-                              await mergeCloudResumeRowIntoLocalStorage(row);
-                              requestAnimationFrame(() => {
-                                skipCloudSave.current = false;
-                              });
-                            } catch (e) {
-                              console.warn(e);
-                            }
-                          }}
-                        >
-                          {r.name}
-                        </button>
-                      ))
-                    )
-                  ) : (
-                    <div className="px-4 py-3 text-sm text-white/50">
-                      Sign in to sync resumes to the cloud.
-                    </div>
-                  )}
-                </div>
-                <div className="border-t border-white/10" />
-                <div className="p-4">
+              {toolbarMoreOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(100vw-2rem,280px)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b223a] py-1 text-white shadow-2xl"
+                >
                   <button
-                    className="w-full rounded-xl bg-teal-500 px-4 py-2 font-semibold text-white hover:bg-teal-400"
-                    onClick={async () => {
-                      setResumeMenuOpen(false);
-                      if (!user) return;
-                      try {
-                        skipCloudSave.current = true;
-                        const payload: resumeCloud.ResumeCloudPayload = {
-                          data: emptyResume,
-                          customize: defaultCustomize,
-                          updatedAt: Date.now(),
-                        };
-                        const row = await resumeCloud.createResume(
-                          `Resume No.${resumeRows.length + 1}`,
-                          payload
-                        );
-                        setData(emptyResume);
-                        setCustomize(defaultCustomize);
-                        setActiveResumeId(row.id);
-                        baselineResumeCloudSnapshot.current = snapshotResumeForCloud(emptyResume, defaultCustomize);
-                        window.localStorage.setItem(ACTIVE_RESUME_ID_KEY, row.id);
-                        window.localStorage.setItem(
-                          RESUME_BUILDER_STORAGE_KEY,
-                          JSON.stringify({
-                            ...readLocalResumeBundleRaw(),
-                            ...payload,
-                            coverLetter: emptyCoverLetter(),
-                            coverLetterCustomize: defaultCustomize,
-                          })
-                        );
-                        setResumeRows((rs) => [{ id: row.id, name: row.name }, ...rs]);
-                        requestAnimationFrame(() => {
-                          skipCloudSave.current = false;
-                        });
-                      } catch (e) {
-                        console.warn(e);
-                        skipCloudSave.current = false;
-                      }
-                    }}
                     type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-white/90 hover:bg-white/10"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      setPageSizeMenuOpen(false);
+                      setResumeMenuOpen(true);
+                    }}
                   >
-                    + Add Resume
+                    <span className="truncate">{resumeToolbarLabel}</span>
+                    <span className="ml-auto text-white/50">▾</span>
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-teal-300 hover:bg-white/10"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      onDownload();
+                    }}
+                  >
+                    <DownloadIcon />
+                    Download PDF
+                  </button>
+                  <div className="border-t border-white/10 px-2 py-2">
+                    <div className="px-2 pb-1 text-xs font-medium text-white/50">Page size</div>
+                    <button
+                      type="button"
+                      className={`block w-full rounded-lg px-3 py-2.5 text-left text-sm ${
+                        customize.pageSize === "letter" ? "bg-white/10 text-white" : "text-white/85 hover:bg-white/5"
+                      }`}
+                      onClick={() => {
+                        setCustomizePatch({ pageSize: "letter" });
+                        setToolbarMoreOpen(false);
+                      }}
+                    >
+                      US Letter
+                    </button>
+                    <button
+                      type="button"
+                      className={`block w-full rounded-lg px-3 py-2.5 text-left text-sm ${
+                        customize.pageSize === "a4" ? "bg-white/10 text-white" : "text-white/85 hover:bg-white/5"
+                      }`}
+                      onClick={() => {
+                        setCustomizePatch({ pageSize: "a4" });
+                        setToolbarMoreOpen(false);
+                      }}
+                    >
+                      A4
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
 
       {/* BODY */}
-      <div className="mx-auto max-w-[1400px] px-6 py-6">
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[560px_1fr]">
+      <div className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6 sm:py-6">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[560px_1fr] xl:items-start xl:gap-6">
           {/* LEFT */}
-          <aside className="h-[calc(100vh-150px)] space-y-4 overflow-auto pr-1">
+          <aside className="h-[calc(100vh-14rem)] space-y-4 overflow-y-auto overflow-x-hidden pr-1 sm:h-[calc(100vh-150px)] xl:h-[calc(100vh-150px)]">
             {activeTab === "content" ? (
               <>
 
@@ -2558,8 +2859,13 @@ export default function ResumeBuilder() {
           </aside>
 
           {/* RIGHT: PREVIEW */}
-          <section className="h-[calc(100vh-150px)] overflow-auto rounded-2xl bg-[#e2e5e9] p-8 flex items-start justify-center">
-            <OverleafTabsPreview ref={previewRef} data={data} customize={customize} />
+          <section
+            className="flex h-[calc(100vh-14rem)] w-full min-w-0 flex-col items-end overflow-y-auto overflow-x-hidden pt-2 pb-4 sm:h-[calc(100vh-150px)] xl:h-[calc(100vh-150px)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            aria-label="Resume preview"
+          >
+            <div className="flex w-full min-w-0 max-w-full justify-end">
+              <OverleafTabsPreview ref={previewRef} data={data} customize={customize} />
+            </div>
           </section>
         </div>
       </div>

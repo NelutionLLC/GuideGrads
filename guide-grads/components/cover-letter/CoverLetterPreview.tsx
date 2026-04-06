@@ -2,8 +2,9 @@
 
 import type { AccentApply, HeaderLayout, ResumeCustomize } from "@/components/resume/ResumeBuilder";
 import { defaultAccentApply } from "@/components/resume/ResumeBuilder";
+import { pageDimensions, resolvePageSize } from "@/lib/page/a4";
 import { type CoverLetterData, coverLetterShouldHidePreviewPlaceholders } from "@/types/coverLetter";
-import React, { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
+import React, { forwardRef, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
 const mmToPx = (mm: number) => (mm * 96) / 25.4;
@@ -97,9 +98,6 @@ function IconLocation() {
   );
 }
 
-const LETTER_W = 8.5 * 96;
-const LETTER_H = 11 * 96;
-
 const CONTACT_GAP_PX = 10;
 
 export type CoverLetterPreviewHandle = {
@@ -120,6 +118,7 @@ type ProfileHeaderProps = {
   padY: number;
   sectionGapPxResolved: number;
   hidePreviewPlaceholders: boolean;
+  pageW: number;
 };
 
 function CoverLetterProfileHeader({
@@ -131,6 +130,7 @@ function CoverLetterProfileHeader({
   padY,
   sectionGapPxResolved,
   hidePreviewPlaceholders,
+  pageW,
 }: ProfileHeaderProps) {
   const p = letter.profile;
   const dateText = letter.dateStr?.trim() ?? "";
@@ -499,7 +499,7 @@ function CoverLetterProfileHeader({
       <div
         style={{
           background: bannerBg,
-          width: LETTER_W,
+          width: pageW,
           boxSizing: "border-box",
           marginLeft: -padX,
           marginTop: -padY,
@@ -528,7 +528,8 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
   const baseFontPx = useMemo(() => ptToPx(customize.fontSizePt), [customize.fontSizePt]);
   const padX = useMemo(() => mmToPx(customize.marginXmm), [customize.marginXmm]);
   const padY = useMemo(() => mmToPx(customize.marginYmm), [customize.marginYmm]);
-  const contentW = LETTER_W - padX * 2;
+  const { pageW, pageH } = useMemo(() => pageDimensions(customize.pageSize), [customize.pageSize]);
+  const contentW = pageW - padX * 2;
 
   const fontFamily = useMemo(() => {
     const name = (customize.fontName?.trim() || "Lato") as string;
@@ -575,22 +576,40 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
   }, [customize.fontKind, customize.fontName]);
 
   const [scale, setScale] = React.useState(1);
-  React.useEffect(() => {
+  useLayoutEffect(() => {
+    const horizontalGutterPx = 0;
+
     const update = () => {
       const el = containerRef.current;
       if (!el) return;
-      const w = el.clientWidth - 48;
-      if (w > 0) setScale(Math.min(1, w / LETTER_W));
+      const w = Math.max(0, el.clientWidth - horizontalGutterPx);
+      if (w <= 0) return;
+      const next = Math.min(1, w / pageW);
+      setScale((prev) => (Math.abs(prev - next) < 0.0005 ? prev : next));
     };
+
     update();
-    const ro = new ResizeObserver(update);
-    if (containerRef.current) ro.observe(containerRef.current);
+
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      const cw = entries[0]?.contentRect.width;
+      if (cw !== undefined && cw > 0) {
+        const w = Math.max(0, cw - horizontalGutterPx);
+        const next = Math.min(1, w / pageW);
+        setScale((prev) => (Math.abs(prev - next) < 0.0005 ? prev : next));
+      } else {
+        update();
+      }
+    });
+    ro.observe(el);
     window.addEventListener("resize", update);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, []);
+  }, [pageW]);
 
   const isBanner = customize.headerColorMode === "banner";
   const ph = useMemo(
@@ -624,37 +643,42 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
   const salutationTrim = letter.salutation?.trim() ?? "";
   const closingTrim = letter.closingLine?.trim() ?? "";
 
-  useImperativeHandle(ref, () => ({
-    download: async () => {
-      const pageEl = containerRef.current?.querySelector<HTMLElement>("[data-cover-letter-page]");
-      if (!pageEl) return;
-      const [{ default: jsPDF }, { toJpeg }] = await Promise.all([
-        import("jspdf"),
-        import("html-to-image"),
-      ]);
-      const dataUrl = await toJpeg(pageEl, {
-        quality: 0.97,
-        backgroundColor: "#ffffff",
-        pixelRatio: 2,
-        width: LETTER_W,
-        height: LETTER_H,
-      });
-      const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "portrait" });
-      doc.addImage(dataUrl, "JPEG", 0, 0, 612, 792);
-      const safeCompany = letter.companyName?.trim().replace(/[^\w\s-]/g, "").slice(0, 40) || "cover-letter";
-      doc.save(`cover-letter-${safeCompany}.pdf`);
-    },
-  }));
+  useImperativeHandle(
+    ref,
+    () => ({
+      download: async () => {
+        const pageEl = containerRef.current?.querySelector<HTMLElement>("[data-cover-letter-page]");
+        if (!pageEl) return;
+        const [{ default: jsPDF }, { toJpeg }] = await Promise.all([
+          import("jspdf"),
+          import("html-to-image"),
+        ]);
+        const dataUrl = await toJpeg(pageEl, {
+          quality: 0.97,
+          backgroundColor: "#ffffff",
+          pixelRatio: 2,
+          width: pageW,
+          height: pageH,
+        });
+        const fmt = resolvePageSize(customize.pageSize) === "a4" ? "a4" : "letter";
+        const doc = new jsPDF({ unit: "pt", format: fmt, orientation: "portrait" });
+        doc.addImage(dataUrl, "JPEG", 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
+        const safeCompany = letter.companyName?.trim().replace(/[^\w\s-]/g, "").slice(0, 40) || "cover-letter";
+        doc.save(`cover-letter-${safeCompany}.pdf`);
+      },
+    }),
+    [customize.pageSize, pageW, pageH, letter.companyName]
+  );
 
   const lineSnap = Math.max(1, Math.round(baseFontPx * customize.lineHeight));
   const sectionGapPxResolved = useMemo(
     () => Math.max(5, Math.min(24, customize.sectionGapPx + 4)),
     [customize.sectionGapPx]
   );
-  const totalScaledHeight = LETTER_H * scale;
+  const totalScaledHeight = pageH * scale;
 
   return (
-    <div ref={containerRef} className="flex w-full min-h-0 flex-col items-center">
+    <div ref={containerRef} className="flex min-h-0 w-full flex-col items-end">
       <style>{`
         .cover-letter-body p { margin: 0 0 0.85em 0; line-height: ${lineSnap}px; }
         .cover-letter-body p:last-child { margin-bottom: 0; }
@@ -665,8 +689,8 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
       <div
         style={{
           transform: `scale(${scale})`,
-          transformOrigin: "top center",
-          width: LETTER_W,
+          transformOrigin: "top right",
+          width: pageW,
           height: totalScaledHeight / scale,
           marginBottom: totalScaledHeight - totalScaledHeight / scale,
         }}
@@ -675,8 +699,8 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
           data-cover-letter-page
           className="bg-white shadow-md"
           style={{
-            width: LETTER_W,
-            height: LETTER_H,
+            width: pageW,
+            height: pageH,
             paddingLeft: padX,
             paddingRight: padX,
             paddingTop: padY,
@@ -698,11 +722,17 @@ const CoverLetterPreview = forwardRef<CoverLetterPreviewHandle, Props>(function 
             padY={padY}
             sectionGapPxResolved={sectionGapPxResolved}
             hidePreviewPlaceholders={hidePreviewPlaceholders}
+            pageW={pageW}
           />
 
           <div style={{ width: contentW, maxWidth: "100%" }}>
-            {/* To, + Recipient */}
-            <div style={{ marginBottom: sectionGapPxResolved }}>
+            {/* To, + Recipient — extra top space so it doesn’t crowd the profile header */}
+            <div
+              style={{
+                marginTop: sectionGapPxResolved + 14,
+                marginBottom: sectionGapPxResolved,
+              }}
+            >
               <div style={{ ...text, fontSize: baseFontPx * 0.95, marginBottom: 4 }}>To,</div>
               <div style={letter.recipientName?.trim() || hidePreviewPlaceholders ? text : ph}>
                 {letter.recipientName?.trim() || (hidePreviewPlaceholders ? "" : "Recipient Name")}

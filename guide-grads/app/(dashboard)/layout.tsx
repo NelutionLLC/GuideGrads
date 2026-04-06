@@ -13,10 +13,7 @@ export default function DashboardLayout({
       {/* Top navbar (same as home page) */}
       <HomeNavbar />
 
-      {/* Page content */}
-      <main className="px-6 py-6">
-        {children}
-      </main>
+      <main className="px-6 pb-6 pt-3 sm:px-6 sm:pt-4 sm:pb-6">{children}</main>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { pageDimensions, resolvePageSize } from "@/lib/page/a4";
+import React, { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AccentApply, EntryLayout, HeaderLayout, Project, ResumeCustomize, ResumeData } from "../ResumeBuilder";
 
 const DEFAULT_ACCENT_HEX = "#0f172a";
@@ -40,10 +41,6 @@ function entryTitleStyle(customize: ResumeCustomize): React.CSSProperties {
 
 const ptToPx = (pt: number) => (pt * 96) / 72;
 const mmToPx = (mm: number) => (mm * 96) / 25.4;
-
-// US Letter @ 96dpi
-const LETTER_W = 8.5 * 96; // 816
-const LETTER_H = 11 * 96; // 1056
 
 
 function injectBulletStyles(html: string): string {
@@ -1573,7 +1570,7 @@ function renderProjectBlock(p: Project, customize: ResumeCustomize): React.React
 }
 
 /** Build blocks (continuous flow; pages slice by viewport height for line-level breaks) */
-function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: number): Block[] {
+function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: number, pageW: number): Block[] {
   const blocks: Block[] = [];
 
   const contactItems: { icon: React.ReactNode; label: string; href?: string }[] = [];
@@ -1723,7 +1720,7 @@ function buildBlocks(data: ResumeData, customize: ResumeCustomize, baseFontPx: n
         <div
           style={{
             background: bannerBg,
-            width: LETTER_W,
+            width: pageW,
             boxSizing: "border-box",
             marginLeft: -contentPadPx,
             marginRight: -contentPadPx,
@@ -2127,8 +2124,10 @@ const OverleafTabsPreview = React.forwardRef<
   const padX = useMemo(() => mmToPx(customize.marginXmm), [customize.marginXmm]);
   const padY = useMemo(() => mmToPx(customize.marginYmm), [customize.marginYmm]);
 
-  const contentW = LETTER_W - padX * 2;
-  const contentH = LETTER_H - padY * 2;
+  const { pageW, pageH } = useMemo(() => pageDimensions(customize.pageSize), [customize.pageSize]);
+
+  const contentW = pageW - padX * 2;
+  const contentH = pageH - padY * 2;
 
   /** Theoretical line step (before DOM measurement). */
   const lineStepPx = useMemo(
@@ -2209,7 +2208,7 @@ const OverleafTabsPreview = React.forwardRef<
   }, [customize.fontKind, customize.fontName]);
   
 
-  const blocks = useMemo(() => buildBlocks(data, customize, baseFontPx), [data, customize, baseFontPx]);
+  const blocks = useMemo(() => buildBlocks(data, customize, baseFontPx, pageW), [data, customize, baseFontPx, pageW]);
 
   const measureRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -2276,50 +2275,54 @@ const OverleafTabsPreview = React.forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, contentH, contentW, lineStepPx, baseFontPx, customize.lineHeight, fontFamily, customize.entryGapPx, customize.sectionGapPx]);
 
-  // Calculate scale to fit container width
-  useEffect(() => {
+  // Fit width to preview column — useLayoutEffect so the first paint uses the real scale (avoids flash of scale=1 then shrink).
+  useLayoutEffect(() => {
+    /** No horizontal inset so preview can align with toolbar actions (Download); scaling uses transformOrigin top right so the page stays right-aligned. */
+    const horizontalGutterPx = 0;
+
     const updateScale = () => {
       const container = containerRef.current;
       if (!container) return;
-      
       const containerWidth = container.clientWidth;
-      const padding = 48; // Account for padding in container
-      const availableWidth = containerWidth - padding;
-      
-      if (availableWidth > 0) {
-        const newScale = Math.min(1, availableWidth / LETTER_W);
-        setScale(newScale);
-      }
+      const availableWidth = Math.max(0, containerWidth - horizontalGutterPx);
+      if (availableWidth <= 0) return;
+      const next = Math.min(1, availableWidth / pageW);
+      setScale((prev) => (Math.abs(prev - next) < 0.0005 ? prev : next));
     };
 
     updateScale();
-    
-    // Use ResizeObserver for container size changes
+
     const container = containerRef.current;
-    if (container) {
-      const resizeObserver = new ResizeObserver(() => {
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w !== undefined && w > 0) {
+        const availableWidth = Math.max(0, w - horizontalGutterPx);
+        const next = Math.min(1, availableWidth / pageW);
+        setScale((prev) => (Math.abs(prev - next) < 0.0005 ? prev : next));
+      } else {
         updateScale();
-        measureAndPaginate();
-      });
-      resizeObserver.observe(container);
-      
-      const onResize = () => {
-        updateScale();
-        measureAndPaginate();
-      };
-      window.addEventListener("resize", onResize);
-      
-      return () => {
-        resizeObserver.disconnect();
-        window.removeEventListener("resize", onResize);
-      };
-    }
+      }
+    });
+    resizeObserver.observe(container);
+
+    const onWindowResize = () => {
+      updateScale();
+      measureAndPaginate();
+    };
+    window.addEventListener("resize", onWindowResize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", onWindowResize);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pageW]);
 
   /** Full page width + horizontal padding so banner can bleed to edges without being clipped (see page wrappers). */
   const commonTextStyle: React.CSSProperties = {
-    width: LETTER_W,
+    width: pageW,
     paddingLeft: padX,
     paddingRight: padX,
     fontFamily,
@@ -2340,43 +2343,50 @@ const OverleafTabsPreview = React.forwardRef<
       const clipH = Math.max(0, Math.round(win.contentEnd - win.start));
       const clipAreaH = Math.min(pm.viewportH, clipH);
       const isTiny = !isLast && clipAreaH < MIN_CLIP_H;
-      total += (isLast || isTiny) ? LETTER_H : padY * 2 + clipAreaH;
+      total += (isLast || isTiny) ? pageH : padY * 2 + clipAreaH;
     }
     total += 24 * Math.max(0, numPages - 1);
     return total * scale;
-  }, [pm.pageCount, pm.pageWindows, pm.viewportH, padY, scale]);
+  }, [pm.pageCount, pm.pageWindows, pm.viewportH, padY, scale, pageH]);
 
-  useImperativeHandle(ref, () => ({
-    download: async () => {
-      const pageEls = containerRef.current?.querySelectorAll<HTMLElement>("[data-resume-page]");
-      if (!pageEls || pageEls.length === 0) return;
+  useImperativeHandle(
+    ref,
+    () => ({
+      download: async () => {
+        const pageEls = containerRef.current?.querySelectorAll<HTMLElement>("[data-resume-page]");
+        if (!pageEls || pageEls.length === 0) return;
 
-      const [{ default: jsPDF }, { toJpeg }] = await Promise.all([
-        import("jspdf"),
-        import("html-to-image"),
-      ]);
+        const [{ default: jsPDF }, { toJpeg }] = await Promise.all([
+          import("jspdf"),
+          import("html-to-image"),
+        ]);
 
-      const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "portrait" });
+        const fmt = resolvePageSize(customize.pageSize) === "a4" ? "a4" : "letter";
+        const doc = new jsPDF({ unit: "pt", format: fmt, orientation: "portrait" });
 
-      for (let i = 0; i < pageEls.length; i++) {
-        // html-to-image uses SVG foreignObject — handles all modern CSS including lab()/oklch()
-        const dataUrl = await toJpeg(pageEls[i], {
-          quality: 0.97,
-          backgroundColor: "#ffffff",
-          pixelRatio: 2,
-          width: LETTER_W,
-          height: LETTER_H,
-        });
-        if (i > 0) doc.addPage("letter", "portrait");
-        doc.addImage(dataUrl, "JPEG", 0, 0, 612, 792);
-      }
+        for (let i = 0; i < pageEls.length; i++) {
+          const pageWPt = doc.internal.pageSize.getWidth();
+          const pageHPt = doc.internal.pageSize.getHeight();
+          // html-to-image uses SVG foreignObject — handles all modern CSS including lab()/oklch()
+          const dataUrl = await toJpeg(pageEls[i], {
+            quality: 0.97,
+            backgroundColor: "#ffffff",
+            pixelRatio: 2,
+            width: pageW,
+            height: pageH,
+          });
+          if (i > 0) doc.addPage(fmt, "portrait");
+          doc.addImage(dataUrl, "JPEG", 0, 0, pageWPt, pageHPt);
+        }
 
-      doc.save("resume.pdf");
-    },
-  }));
+        doc.save("resume.pdf");
+      },
+    }),
+    [customize.pageSize, pageW, pageH]
+  );
 
   return (
-    <div ref={containerRef} className="w-full flex flex-col items-center min-h-0 relative">
+    <div ref={containerRef} className="relative flex min-h-0 w-full flex-col items-end">
       <style>{`
         .resume-preview ul { list-style: none; padding-left: 0.6em; margin: 0; }
         .resume-preview ol { list-style: none; padding-left: 0.6em; margin: 0; }
@@ -2391,15 +2401,15 @@ const OverleafTabsPreview = React.forwardRef<
         ref={measureRef}
         aria-hidden
         style={{
-          width: LETTER_W,
+          width: pageW,
           position: "fixed",
-          left: -LETTER_W - 100,
+          left: -pageW - 100,
           top: 0,
           visibility: "hidden",
           pointerEvents: "none",
         }}
       >
-        <div data-resume-flow-strip style={{ width: LETTER_W, display: "flow-root", boxSizing: "border-box" }}>
+        <div data-resume-flow-strip style={{ width: pageW, display: "flow-root", boxSizing: "border-box" }}>
           <ResumeFlowColumn
             blocks={blocks}
             sectionMarginLevel={customize.sectionGapPx}
@@ -2414,8 +2424,9 @@ const OverleafTabsPreview = React.forwardRef<
       <div
         style={{
           transform: `scale(${scale})`,
-          transformOrigin: "top center",
-          width: LETTER_W,
+          /** `top center` left a gap on the right when scaled down; `top right` keeps the paper flush with the preview column (matches Download above). */
+          transformOrigin: "top right",
+          width: pageW,
           height: totalScaledHeight / scale, // layout height in unscaled px
           marginBottom: totalScaledHeight - totalScaledHeight / scale, // compensate visual shrink
         }}
@@ -2431,9 +2442,9 @@ const OverleafTabsPreview = React.forwardRef<
             // Must match totalScaledHeight logic — same threshold for tiny-page detection.
             const MIN_CLIP_H = Math.max(pm.lineSnapPx * 6, Math.round(pm.viewportH * 0.35), 80);
             const isTinyPage = !isLastPage && clipAreaH < MIN_CLIP_H;
-            /** Last page + tiny intermediate pages use full LETTER_H. Other intermediate pages shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
-            const pageHeight = (isLastPage || isTinyPage) ? LETTER_H : padY * 2 + clipAreaH;
-            const bottomFiller = (isLastPage || isTinyPage) ? Math.max(0, LETTER_H - padY * 2 - clipAreaH) : 0;
+            /** Last page + tiny intermediate pages use full page height. Other intermediate pages shrink to padY*2+clipAreaH to eliminate the empty gap at the bottom. */
+            const pageHeight = (isLastPage || isTinyPage) ? pageH : padY * 2 + clipAreaH;
+            const bottomFiller = (isLastPage || isTinyPage) ? Math.max(0, pageH - padY * 2 - clipAreaH) : 0;
             /** Page 1 + banner: pull the clip into the top padding so the bar isn’t clipped (cover-letter behavior). */
             const bannerBleedFirstPage = pageIdx === 0 && customize.headerColorMode === "banner";
             return (
@@ -2442,7 +2453,7 @@ const OverleafTabsPreview = React.forwardRef<
               data-resume-page
               className="bg-white shadow-md"
               style={{
-                width: LETTER_W,
+                width: pageW,
                 height: pageHeight,
                 paddingLeft: padX,
                 paddingRight: padX,
@@ -2454,7 +2465,7 @@ const OverleafTabsPreview = React.forwardRef<
             >
               <div
                 style={{
-                  width: LETTER_W,
+                  width: pageW,
                   marginLeft: -padX,
                   marginTop: bannerBleedFirstPage ? -padY : 0,
                   overflow: "visible",
@@ -2465,7 +2476,7 @@ const OverleafTabsPreview = React.forwardRef<
                 <div
                   style={{
                     height: clipAreaH,
-                    width: LETTER_W,
+                    width: pageW,
                     overflow: "hidden",
                     display: "flow-root",
                     isolation: "isolate",
